@@ -5,5 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-
+    "ollama>=0.6.1",
+    "prompt-toolkit>=3.0.52",
 ]
+
+[dependency-groups]
+dev = [
+    "isort>=8.0.1",
+    "ruff>=0.15.10",
+    "ty>=0.0.29",
+]
+
+[tool.ruff]
+line-length=120
