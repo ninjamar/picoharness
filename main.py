@@ -11,7 +11,7 @@ from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
-MODEL = "lfm2.5-thinking:latest"
+MODEL = "lfm2:24b"
 
 STYLE = Style.from_dict(
     {
@@ -61,13 +61,6 @@ class BaseTool:
 
     name: str = ""
 
-    _registry: dict[str, type["BaseTool"]] = {}
-
-    def __init_subclass__(cls, **kwargs) -> None:
-        super().__init_subclass__(**kwargs)
-        if cls.name:
-            BaseTool._registry[cls.name] = cls
-
     @classmethod
     def to_ollama(cls) -> dict:
         """Return the Ollama-compatible tool definition."""
@@ -80,7 +73,7 @@ class BaseTool:
         properties = {}
         required = []
         for pname, param in sig.parameters.items():
-            if pname in ("self", "kwargs"):
+            if pname in ("cls", "kwargs"):
                 continue
 
             hint = hints.get(pname)
@@ -106,7 +99,8 @@ class BaseTool:
             },
         }
 
-    async def execute(self, **kwargs) -> str:
+    @classmethod
+    async def execute(cls, **kwargs) -> str:
         """Execute the tool and return a result string."""
         raise NotImplementedError
 
@@ -116,14 +110,21 @@ class ReadFileTool(BaseTool):
 
     name = "read_file"
 
-    async def execute(self, path: Annotated[str, "Absolute or relative path to the file to read."], **kwargs) -> str:
+    @classmethod
+    async def execute(cls, path: Annotated[str, "Absolute or relative path to the file to read."], **kwargs) -> str:
         """Read the contents of a file on disk and return them as a string."""
         try:
             return await asyncio.to_thread(Path(path).read_text)
         except OSError as e:
             return f"Error reading file: {e}"
         
-    
+class WeatherApiTool(BaseTool):
+    name = "stub"
+
+    @classmethod
+    async def execute(cls) -> str:
+        """Get the weather"""
+        return "The weather is sunny today"
 
 
 class ChatBackend:
@@ -137,9 +138,9 @@ class ChatBackend:
 
     async def _execute_tool(self, tool_name: str, arguments: dict) -> str:
         """Execute a tool and return its result."""
-        tool_cls = BaseTool._registry.get(tool_name)
-        if tool_cls:
-            return await tool_cls().execute(**arguments)
+        for tool_cls in self.tools:
+            if tool_cls.name == tool_name:
+                return await tool_cls.execute(**arguments)
         return f"Unknown tool: {tool_name}"
 
     async def stream(self, user_input: str | None = None) -> AsyncGenerator[ThinkingEvent | ResponseEvent, None]:
@@ -160,7 +161,7 @@ class ChatBackend:
                 model=self.model,
                 messages=self.messages,
                 stream=True,
-                think=True,
+                think=False,
                 tools=[tool.to_ollama() for tool in self.tools] or None,
             ):
                 if data := part.message.thinking:
@@ -255,11 +256,13 @@ class TerminalUI:
                     if prev_mode is not None:
                         print()
                     print_formatted_text(
-                        FormattedText([
-                            ("class:tool", f"[tool: {event.name}]\n"),
-                            ("class:tool", f"input: {event.input}\n"),
-                            ("class:tool", f"output: {event.output}"),
-                        ]),
+                        FormattedText(
+                            [
+                                ("class:tool", f"[tool: {event.name}]\n"),
+                                ("class:tool", f"input: {event.input}\n"),
+                                ("class:tool", f"output: {event.output}"),
+                            ]
+                        ),
                         end="",
                         flush=True,
                         style=self.style,
@@ -290,4 +293,4 @@ async def main(tools: list[type[BaseTool]] | None = None):
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main([WeatherApiTool]))
