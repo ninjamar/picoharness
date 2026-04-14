@@ -1,7 +1,9 @@
 import asyncio
+import inspect
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated, get_args, get_origin, get_type_hints
 
 import ollama
 from prompt_toolkit import PromptSession, print_formatted_text
@@ -16,43 +18,48 @@ STYLE = Style.from_dict(
         "prompt": "ansibrightgreen bold",
         "thinking": "ansidarkgray italic",
         "response": "ansiwhite",
+        "tool": "ansiblue bold",
     }
 )
 
 
 @dataclass
-class ChatEvent:
-    pass
-
-
-@dataclass
-class ThinkingEvent(ChatEvent):
+class ThinkingEvent:
     """A fragment of the model's internal reasoning."""
 
     text: str
 
 
 @dataclass
-class ResponseEvent(ChatEvent):
+class ResponseEvent:
     """A fragment of the model's visible reply."""
 
     text: str
 
 
 @dataclass
-class ToolCallRequest(ChatEvent):
-    """Model asked to invoke a tool."""
+class ToolEvent:
+    name: str
+    input: dict
+    output: str
 
-    tool_name: str
-    arguments: dict
+
+def _py_to_json_type(hint: type) -> str:
+    """Map a Python type to its JSON Schema type string.
+
+    Handles both scalar types (str, int, float, bool) and generic aliases
+    (list[...], dict[...], tuple[...]). Falls back to "string" for unknown types.
+    """
+    origin = get_origin(hint)
+    if origin is not None:
+        return {list: "array", dict: "object", tuple: "array"}.get(origin, "string")
+    return {str: "string", int: "integer", float: "number", bool: "boolean"}.get(hint, "string")
 
 
 class BaseTool:
     """Base class for tools that can be called by the model."""
 
     name: str = ""
-    description: str = ""
-    parameters: dict = {}
 
     _registry: dict[str, type["BaseTool"]] = {}
 
@@ -64,12 +71,38 @@ class BaseTool:
     @classmethod
     def to_ollama(cls) -> dict:
         """Return the Ollama-compatible tool definition."""
+        doc = inspect.getdoc(cls.execute) or ""
+        description = doc.split("\n\n")[0].replace("\n", " ").strip()
+
+        hints = get_type_hints(cls.execute, include_extras=True)
+        sig = inspect.signature(cls.execute)
+
+        properties = {}
+        required = []
+        for pname, param in sig.parameters.items():
+            if pname in ("self", "kwargs"):
+                continue
+
+            hint = hints.get(pname)
+            if hint is not None and get_origin(hint) is Annotated:
+                base, desc = get_args(hint)[0], get_args(hint)[1]
+            else:
+                base, desc = hint, ""
+
+            properties[pname] = {"type": _py_to_json_type(base) if base else "string", "description": desc}
+            if param.default is inspect.Parameter.empty:
+                required.append(pname)
+
         return {
             "type": "function",
             "function": {
                 "name": cls.name,
-                "description": cls.description,
-                "parameters": cls.parameters,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
             },
         }
 
@@ -82,23 +115,15 @@ class ReadFileTool(BaseTool):
     """Tool to read the contents of a file."""
 
     name = "read_file"
-    description = "Read the contents of a file on disk and return them as a string."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "path": {
-                "type": "string",
-                "description": "Absolute or relative path to the file to read.",
-            }
-        },
-        "required": ["path"],
-    }
 
-    async def execute(self, path: str, **kwargs) -> str:
+    async def execute(self, path: Annotated[str, "Absolute or relative path to the file to read."], **kwargs) -> str:
+        """Read the contents of a file on disk and return them as a string."""
         try:
             return await asyncio.to_thread(Path(path).read_text)
         except OSError as e:
             return f"Error reading file: {e}"
+        
+    
 
 
 class ChatBackend:
@@ -108,58 +133,69 @@ class ChatBackend:
         self.model = model
         self.client = ollama.AsyncClient()
         self.messages: list[dict[str, str]] = [] if system_prompt is None else [system_prompt]
-
         self.tools = [] if tools is None else tools
 
-    async def stream(self, user_input: str | None = None) -> AsyncGenerator[ChatEvent, None]:
+    async def _execute_tool(self, tool_name: str, arguments: dict) -> str:
+        """Execute a tool and return its result."""
+        tool_cls = BaseTool._registry.get(tool_name)
+        if tool_cls:
+            return await tool_cls().execute(**arguments)
+        return f"Unknown tool: {tool_name}"
+
+    async def stream(self, user_input: str | None = None) -> AsyncGenerator[ThinkingEvent | ResponseEvent, None]:
         """Stream response events from the model.
 
-        Yields ChatEvent objects (ThinkingEvent, ResponseEvent, ToolCallRequest).
-        Appends user message to history before streaming (if user_input is not None),
-        appends assistant response after streaming completes.
+        Yields ThinkingEvent and ResponseEvent objects. Handles tool execution
+        internally—when the model calls a tool, it executes it and continues
+        generating the response based on the tool output.
         """
         if user_input is not None:
             self.messages.append({"role": "user", "content": user_input})
 
-        think = ""
-        response = ""
-        pending_tool_calls: list[dict] = []
+        while True:
+            response = ""
+            tool_calls: list[dict] = []
 
-        async for part in await self.client.chat(
-            model=self.model,
-            messages=self.messages,
-            stream=True,
-            think=True,
-            tools=[tool.to_ollama() for tool in self.tools] or None,
-        ):
-            if data := part.message.thinking:
-                think += data
-                yield ThinkingEvent(data)
+            async for part in await self.client.chat(
+                model=self.model,
+                messages=self.messages,
+                stream=True,
+                think=True,
+                tools=[tool.to_ollama() for tool in self.tools] or None,
+            ):
+                if data := part.message.thinking:
+                    yield ThinkingEvent(data)
 
-            if data := part.message.content:
-                response += data
-                yield ResponseEvent(data)
+                if data := part.message.content:
+                    response += data
+                    yield ResponseEvent(data)
 
-            if part.message.tool_calls:
-                for tc in part.message.tool_calls:
-                    pending_tool_calls.append(
+                if part.message.tool_calls:
+                    tool_calls.extend(
                         {"function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                    )
-                    yield ToolCallRequest(
-                        tool_name=tc.function.name,
-                        arguments=tc.function.arguments,
+                        for tc in part.message.tool_calls
                     )
 
-        if pending_tool_calls:
-            self.messages.append(
-                {
-                    "role": "assistant",
-                    "content": response,
-                    "tool_calls": pending_tool_calls,
-                }
-            )
-        else:
-            self.messages.append({"role": "assistant", "content": response})
+            msg = {"role": "assistant", "content": response}
+            if tool_calls:
+                msg["tool_calls"] = tool_calls
+            self.messages.append(msg)
+
+            if not tool_calls:  # exit when no tools left
+                break
+
+            # Execute tools and append results
+            for tc in tool_calls:
+                result = await self._execute_tool(tc["function"]["name"], tc["function"]["arguments"])
+
+                yield ToolEvent(
+                    name=tc["function"]["name"],
+                    input=tc["function"]["arguments"],
+                    output=result,
+                )
+                self.messages.append({"role": "tool", "content": result})
+
+            # Loop continues: client.chat() is called again with updated messages
 
 
 class TerminalUI:
@@ -181,7 +217,7 @@ class TerminalUI:
             if s := user_input.strip():
                 return s
 
-    async def render_stream(self, events: AsyncGenerator[ChatEvent, None]) -> None:
+    async def render_stream(self, events: AsyncGenerator[ThinkingEvent | ResponseEvent | ToolEvent, None]) -> None:
         """Consume and render a stream of chat events.
 
         Handles mode transitions between thinking and response output,
@@ -194,41 +230,51 @@ class TerminalUI:
                 case ThinkingEvent():
                     if prev_mode is not None and prev_mode != "thinking":
                         print()
-                    self.print_event(event)
+                    fmt = "thinking"
+                    print_formatted_text(
+                        FormattedText([(f"class:{fmt}", event.text)]),
+                        end="",
+                        flush=True,
+                        style=self.style,
+                    )
                     prev_mode = "thinking"
 
                 case ResponseEvent():
                     if prev_mode is not None and prev_mode != "response":
                         print()
-                    self.print_event(event)
+                    fmt = "response"
+                    print_formatted_text(
+                        FormattedText([(f"class:{fmt}", event.text)]),
+                        end="",
+                        flush=True,
+                        style=self.style,
+                    )
                     prev_mode = "response"
+
+                case ToolEvent():
+                    if prev_mode is not None:
+                        print()
+                    print_formatted_text(
+                        FormattedText([
+                            ("class:tool", f"[tool: {event.name}]\n"),
+                            ("class:tool", f"input: {event.input}\n"),
+                            ("class:tool", f"output: {event.output}"),
+                        ]),
+                        end="",
+                        flush=True,
+                        style=self.style,
+                    )
+                    prev_mode = "tool"
 
         print()  # Trailing newline after stream completes
 
-    def print_info(self, text: str) -> None:
-        """Print informational text."""
-        print(text)
 
-    def print_event(self, event: ChatEvent):
-        fmt = None
-        if isinstance(event, ThinkingEvent):
-            fmt = "thinking"
-        elif isinstance(event, ResponseEvent):
-            fmt = "response"
-
-        print_formatted_text(
-            FormattedText([(f"class:{fmt}", event.text)]),
-            end="",
-            flush=True,
-            style=self.style,
-        )
-
-
-async def _app(tools: list[type[BaseTool]] | None = None):
+async def main(tools: list[type[BaseTool]] | None = None):
+    """Run the interactive chat application."""
     backend = ChatBackend(MODEL, tools=tools or [])
     ui = TerminalUI()
 
-    ui.print_info(f"Running model {MODEL}. Ensure the context window has been turned up for optimal usage")
+    print(f"Running model {MODEL}. Ensure the context window has been turned up for optimal usage")
 
     while True:
         try:
@@ -237,39 +283,11 @@ async def _app(tools: list[type[BaseTool]] | None = None):
             break
 
         try:
-            next_input: str | None = user_input
-            while True:
-                tool_requests: list[ToolCallRequest] = []
-
-                async def tee(gen: AsyncGenerator[ChatEvent, None]) -> AsyncGenerator[ChatEvent, None]:
-                    async for event in gen:
-                        if isinstance(event, ToolCallRequest):
-                            tool_requests.append(event)
-                        else:
-                            yield event
-
-                await ui.render_stream(tee(backend.stream(next_input)))
-                next_input = None  # subsequent passes: no new user message
-
-                if not tool_requests:
-                    break
-
-                for tool_request in tool_requests:
-                    tool_cls = BaseTool._registry.get(tool_request.tool_name)
-                    if tool_cls:
-                        result = await tool_cls().execute(**tool_request.arguments)
-                    else:
-                        result = f"Unknown tool: {tool_request.tool_name}"
-                    backend.messages.append({"role": "tool", "content": result})
-
+            await ui.render_stream(backend.stream(user_input))
         except asyncio.CancelledError:
             print()
             continue
 
 
-def app(tools: list[type[BaseTool]] | None = None):
-    asyncio.run(_app(tools=tools))
-
-
 if __name__ == "__main__":
-    app()
+    asyncio.run(main())
