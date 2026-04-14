@@ -1,17 +1,16 @@
 import asyncio
-import inspect
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, get_args, get_origin, get_type_hints
 
 import ollama
+from ollama._utils import convert_function_to_tool
 from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
-MODEL = "lfm2:24b"
+MODEL = "lfm2.5-thinking:latest"
 
 STYLE = Style.from_dict(
     {
@@ -44,18 +43,6 @@ class ToolEvent:
     output: str
 
 
-def _py_to_json_type(hint: type) -> str:
-    """Map a Python type to its JSON Schema type string.
-
-    Handles both scalar types (str, int, float, bool) and generic aliases
-    (list[...], dict[...], tuple[...]). Falls back to "string" for unknown types.
-    """
-    origin = get_origin(hint)
-    if origin is not None:
-        return {list: "array", dict: "object", tuple: "array"}.get(origin, "string")
-    return {str: "string", int: "integer", float: "number", bool: "boolean"}.get(hint, "string")
-
-
 class BaseTool:
     """Base class for tools that can be called by the model."""
 
@@ -64,40 +51,9 @@ class BaseTool:
     @classmethod
     def to_ollama(cls) -> dict:
         """Return the Ollama-compatible tool definition."""
-        doc = inspect.getdoc(cls.execute) or ""
-        description = doc.split("\n\n")[0].replace("\n", " ").strip()
-
-        hints = get_type_hints(cls.execute, include_extras=True)
-        sig = inspect.signature(cls.execute)
-
-        properties = {}
-        required = []
-        for pname, param in sig.parameters.items():
-            if pname in ("cls", "kwargs"):
-                continue
-
-            hint = hints.get(pname)
-            if hint is not None and get_origin(hint) is Annotated:
-                base, desc = get_args(hint)[0], get_args(hint)[1]
-            else:
-                base, desc = hint, ""
-
-            properties[pname] = {"type": _py_to_json_type(base) if base else "string", "description": desc}
-            if param.default is inspect.Parameter.empty:
-                required.append(pname)
-
-        return {
-            "type": "function",
-            "function": {
-                "name": cls.name,
-                "description": description,
-                "parameters": {
-                    "type": "object",
-                    "properties": properties,
-                    "required": required,
-                },
-            },
-        }
+        tool = convert_function_to_tool(cls.execute)
+        tool.function.name = cls.name  # preserve the explicit class-level name
+        return tool.model_dump()
 
     @classmethod
     async def execute(cls, **kwargs) -> str:
@@ -111,13 +67,18 @@ class ReadFileTool(BaseTool):
     name = "read_file"
 
     @classmethod
-    async def execute(cls, path: Annotated[str, "Absolute or relative path to the file to read."], **kwargs) -> str:
-        """Read the contents of a file on disk and return them as a string."""
+    async def execute(cls, path: str, **kwargs) -> str:
+        """Read the contents of a file on disk and return them as a string.
+
+        Args:
+            path: Absolute or relative path to the file to read.
+        """
         try:
             return await asyncio.to_thread(Path(path).read_text)
         except OSError as e:
             return f"Error reading file: {e}"
-        
+
+
 class WeatherApiTool(BaseTool):
     name = "stub"
 
@@ -161,7 +122,7 @@ class ChatBackend:
                 model=self.model,
                 messages=self.messages,
                 stream=True,
-                think=False,
+                think=True,
                 tools=[tool.to_ollama() for tool in self.tools] or None,
             ):
                 if data := part.message.thinking:
@@ -194,7 +155,7 @@ class ChatBackend:
                     input=tc["function"]["arguments"],
                     output=result,
                 )
-                self.messages.append({"role": "tool", "content": result})
+                self.messages.append({"role": "tool", "tool_name": tc["function"]["name"], "content": result})
 
             # Loop continues: client.chat() is called again with updated messages
 
@@ -293,4 +254,4 @@ async def main(tools: list[type[BaseTool]] | None = None):
 
 
 if __name__ == "__main__":
-    asyncio.run(main([WeatherApiTool]))
+    asyncio.run(main([WeatherApiTool, ReadFileTool]))
