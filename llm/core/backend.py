@@ -1,14 +1,20 @@
+import asyncio
+import uuid
 from collections.abc import AsyncGenerator
 
-from llm.events import ResponseEvent, ThinkingEvent, ToolEvent
-from llm.provider import OllamaProvider
-
+from ..events import ResponseEvent, ThinkingEvent, ToolEndEvent, ToolStartEvent
+from ..tools import BaseTool
+from .provider import OllamaProvider
 
 
 class ChatBackend:
     """Manages ollama interactions and conversation history."""
 
-    def __init__(self, model, system_prompt=None, tools: list = None) -> None:
+    def __init__(
+        self, config, model: str, system_prompt: dict[str, str] | None = None, tools: list[type[BaseTool]] | None = None
+    ) -> None:
+        self.config = config
+
         self.model = model
         self.client = OllamaProvider()
         self.messages: list[dict[str, str]] = [] if system_prompt is None else [system_prompt]
@@ -18,15 +24,18 @@ class ChatBackend:
         """Execute a tool and return its result."""
         for tool_cls in self.tools:
             if tool_cls.name == tool_name:
-                return await tool_cls.execute(**arguments)
+                return await tool_cls(self.config).execute(**arguments)  # TODO: memoize tool_cls(self.config)
         return f"Unknown tool: {tool_name}"
 
-    async def stream(self, user_input: str | None = None) -> AsyncGenerator[ThinkingEvent | ResponseEvent, None]:
+    async def stream(
+        self, user_input: str | None = None
+    ) -> AsyncGenerator[ThinkingEvent | ResponseEvent | ToolStartEvent | ToolEndEvent, None]:
         """Stream response events from the model.
 
         Yields ThinkingEvent and ResponseEvent objects. Handles tool execution
-        internally—when the model calls a tool, it executes it and continues
-        generating the response based on the tool output.
+        internally—when the model calls tools, it yields ToolStartEvent for each,
+        executes them concurrently, yields ToolEndEvent as each completes,
+        and continues generating the response based on the tool outputs.
         """
         if user_input is not None:
             self.messages.append({"role": "user", "content": user_input})
@@ -63,15 +72,31 @@ class ChatBackend:
             if not tool_calls:  # exit when no tools left
                 break
 
-            # Execute tools and append results
-            for tc in tool_calls:
-                result = await self._execute_tool(tc["function"]["name"], tc["function"]["arguments"])
+            # Execute all tools concurrently
+            async def run_tool(tool_id: str, name: str, args: dict) -> tuple[str, str, str]:
+                result = await self._execute_tool(name, args)
+                return tool_id, name, result
 
-                yield ToolEvent(
-                    name=tc["function"]["name"],
-                    input=tc["function"]["arguments"],
-                    output=result,
-                )
-                self.messages.append({"role": "tool", "tool_name": tc["function"]["name"], "content": result})
+            tasks = []
+            for tc in tool_calls:
+                name = tc["function"]["name"]
+                args = tc["function"]["arguments"]
+                tool_id = str(uuid.uuid4())
+                task = asyncio.create_task(run_tool(tool_id, name, args))
+
+                tasks.append((tool_id, name, args, task))
+
+                yield ToolStartEvent(id=tool_id, name=name, input=args)
+
+            # Collect results as tools complete, yield ToolEndEvent for each
+            results = {}
+            for coro in asyncio.as_completed([t for _, _, _, t in tasks]):
+                tool_id, name, result = await coro
+                results[tool_id] = result
+                yield ToolEndEvent(id=tool_id, output=result)
+
+            # Append tool results to messages in original order
+            for tool_id, name, _, _ in tasks:
+                self.messages.append({"role": "tool", "tool_name": name, "content": results[tool_id]})
 
             # Loop continues: client.chat() is called again with updated messages

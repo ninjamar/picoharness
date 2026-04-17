@@ -1,17 +1,24 @@
 import asyncio
 
-from llm.backend import ChatBackend
-from llm.client import Client
-from llm.tools import BaseTool, ReadFileTool, WeatherApiTool
+from .config import Configuration
+from .tools import BaseTool
+from .tools.agent import AgentTool
 
-MODEL = "lfm2.5-thinking:latest"
+DEFAULT_MODEL = "lfm2.5-thinking:latest"
+DEFAULT_AGENT_MODEL = "lfm2.5-thinking:latest"
+
 
 async def main(tools: list[type[BaseTool]] | None = None):
     """Run the interactive chat application."""
-    backend = ChatBackend(MODEL, tools=tools or [])
-    ui = Client()
+    config = Configuration(
+        model=DEFAULT_MODEL,
+        agent_model=DEFAULT_AGENT_MODEL,
+        tools=tools or [],
+    )
+    backend = config.spawn_backend()
+    ui = config.spawn_client()
 
-    print(f"Running model {MODEL}. Ensure the context window has been turned up for optimal usage")
+    print(f"Running model {config.model}. Ensure the context window has been turned up for optimal usage")
 
     while True:
         try:
@@ -27,4 +34,4 @@ async def main(tools: list[type[BaseTool]] | None = None):
 
 
 if __name__ == "__main__":
-    asyncio.run(main([WeatherApiTool, ReadFileTool]))
+    asyncio.run(main([AgentTool]))

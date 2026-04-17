@@ -16,7 +16,17 @@ class ResponseEvent:
 
 
 @dataclass
-class ToolEvent:
+class ToolStartEvent:
+    """A tool execution has been kicked off."""
+
+    id: str
     name: str
     input: dict
+
+
+@dataclass
+class ToolEndEvent:
+    """A tool execution has completed."""
+
+    id: str
     output: str
