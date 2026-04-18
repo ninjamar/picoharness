@@ -11,9 +11,11 @@ class ChatBackend:
     """Manages ollama interactions and conversation history."""
 
     def __init__(
-        self, config, model: str, system_prompt: dict[str, str] | None = None, tools: list[type[BaseTool]] | None = None
+        self, config, model: str, think: boolean, system_prompt: dict[str, str] | None = None, tools: list[type[BaseTool]] | None = None
     ) -> None:
         self.config = config
+
+        self.think = think
 
         self.model = model
         self.client = OllamaProvider()
@@ -48,7 +50,7 @@ class ChatBackend:
                 model=self.model,
                 messages=self.messages,
                 stream=True,
-                think=True,
+                think=self.think,
                 tools=[tool.to_ollama() for tool in self.tools] or None,
             ):
                 if data := part.message.thinking:

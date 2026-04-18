@@ -13,12 +13,12 @@ STYLE = Style.from_dict(
         "thinking": "ansidarkgray italic",
         "response": "ansiwhite",
         "tool_start": "ansiblue bold",
-        "tool_end": "ansipurple bold"
+        "tool_end": "ansipurple bold",
     }
 )
 
 
-class Client:
+class TerminalUI:
     """Handles terminal I/O: prompts, styled output, and formatted text rendering."""
 
     def __init__(self, config, style: Style = STYLE) -> None:
