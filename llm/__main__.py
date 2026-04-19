@@ -5,13 +5,18 @@ from .config import Configuration
 from .tools import BaseTool, ReadFileTool
 from .tools.agent import AgentTool
 
+# DEFAULT_MODEL = "lfm2.5-thinking:latest"
+# DEFAULT_AGENT_MODEL = "lfm2.5-thinking:latest"
+DEFAULT_MODEL = "Qwen3.5-4B-MLX-4bit"
+DEFAULT_AGENT_MODEL = "Qwen3.5-4B-MLX-4bit"
 
-#DEFAULT_MODEL = "lfm2.5-thinking:latest"
-#DEFAULT_AGENT_MODEL = "lfm2.5-thinking:latest"
-DEFAULT_MODEL = "qwen3.5:4b"
-DEFAULT_AGENT_MODEL="qwen3.5:0.8b"
 
-async def main(tools: list[type[BaseTool]] | None = None, model: str = DEFAULT_MODEL, agent_model: str = DEFAULT_AGENT_MODEL, think: bool = True):
+async def main(
+    tools: list[type[BaseTool]] | None = None,
+    model: str = DEFAULT_MODEL,
+    agent_model: str = DEFAULT_AGENT_MODEL,
+    think: bool = True,
+):
     """Run the interactive chat application."""
     config = Configuration(
         model=model,

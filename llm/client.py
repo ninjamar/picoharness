@@ -31,7 +31,7 @@ class TerminalUI:
         while True:
             with patch_stdout():
                 user_input = await self.session.prompt_async(
-                    FormattedText([("class:prompt", "> ")]),
+                    FormattedText([("class:prompt", ">>> ")]),
                     style=self.style,
                 )
 

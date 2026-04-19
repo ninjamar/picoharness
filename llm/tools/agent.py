@@ -30,9 +30,3 @@ class AgentTool(BaseTool):
             The output from the agent
         """
         return await self.config.spawn_agent(prompt).get_output()
-
-
-if __name__ == "__main__":
-    import pprint
-
-    pprint.pprint(AgentTool.to_ollama())

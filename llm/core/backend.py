@@ -4,29 +4,37 @@ from collections.abc import AsyncGenerator
 
 from ..events import ResponseEvent, ThinkingEvent, ToolEndEvent, ToolStartEvent
 from ..tools import BaseTool
-from .provider import OllamaProvider
+from .provider import OllamaProvider, OpenAICompatibleProvider
 
 
 class ChatBackend:
     """Manages ollama interactions and conversation history."""
 
     def __init__(
-        self, config, model: str, think: boolean, system_prompt: dict[str, str] | None = None, tools: list[type[BaseTool]] | None = None
+        self,
+        config,
+        model: str,
+        think: bool,
+        system_prompt: dict[str, str] | None = None,
+        tools: list[type[BaseTool]] | None = None,
     ) -> None:
         self.config = config
 
         self.think = think
 
         self.model = model
-        self.client = OllamaProvider()
+        # self.client = OllamaProvider()
+        self.client = OpenAICompatibleProvider("http://127.0.0.1:8000/v1")
         self.messages: list[dict[str, str]] = [] if system_prompt is None else [system_prompt]
-        self.tools = [] if tools is None else tools
+
+        self.tools_instances = [tool(self.config) for tool in tools] if tools else None
+        self.tools_schemas = [tool.to_schema() for tool in tools] if tools else None
 
     async def _execute_tool(self, tool_name: str, arguments: dict) -> str:
         """Execute a tool and return its result."""
-        for tool_cls in self.tools:
-            if tool_cls.name == tool_name:
-                return await tool_cls(self.config).execute(**arguments)  # TODO: memoize tool_cls(self.config)
+        for tool_instance in self.tools_instances:
+            if tool_instance.name == tool_name:
+                return await tool_instance.execute(**arguments)
         return f"Unknown tool: {tool_name}"
 
     async def stream(
@@ -46,12 +54,12 @@ class ChatBackend:
             response = ""
             tool_calls: list[dict] = []
 
-            async for part in await self.client.chat(
+            async for part in self.client.chat(
                 model=self.model,
                 messages=self.messages,
                 stream=True,
                 think=self.think,
-                tools=[tool.to_ollama() for tool in self.tools] or None,
+                tools=self.tools_schemas,
             ):
                 if data := part.message.thinking:
                     yield ThinkingEvent(data)

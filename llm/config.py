@@ -1,17 +1,13 @@
-from .client import STYLE, TerminalUI, Style
+from pathlib import Path
+
+from .client import STYLE, Style, TerminalUI
 from .core.backend import ChatBackend
 from .tools import BaseTool
 from .tools.agent import Agent
-from pathlib import Path
-SYSTEM_PROMPT = {
-    "role": "system",
-    "content": (Path(__file__).parent / "system_prompt.md").read_text()
-}
 
-AGENT_SYSTEM_PROMPT = {
-    "role": "system",
-    "content": (Path(__file__).parent / "agent_system_prompt.md").read_text()
-}
+SYSTEM_PROMPT = {"role": "system", "content": (Path(__file__).parent / "system_prompt.md").read_text()}
+
+AGENT_SYSTEM_PROMPT = {"role": "system", "content": (Path(__file__).parent / "agent_system_prompt.md").read_text()}
 
 
 class Configuration:
