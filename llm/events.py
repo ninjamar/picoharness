@@ -2,21 +2,26 @@ from dataclasses import dataclass
 
 
 @dataclass
-class ThinkingEvent:
+class Event:
+    pass
+
+
+@dataclass
+class ThinkingEvent(Event):
     """A fragment of the model's internal reasoning."""
 
     text: str
 
 
 @dataclass
-class ResponseEvent:
+class ResponseEvent(Event):
     """A fragment of the model's visible reply."""
 
     text: str
 
 
 @dataclass
-class ToolStartEvent:
+class ToolStartEvent(Event):
     """A tool execution has been kicked off."""
 
     id: str
@@ -25,7 +30,7 @@ class ToolStartEvent:
 
 
 @dataclass
-class ToolEndEvent:
+class ToolEndEvent(Event):
     """A tool execution has completed."""
 
     id: str

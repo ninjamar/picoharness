@@ -5,7 +5,8 @@ from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
-from .events import ResponseEvent, ThinkingEvent, ToolEndEvent, ToolStartEvent
+from .events import (Event, ResponseEvent, ThinkingEvent, ToolEndEvent,
+                     ToolStartEvent)
 
 STYLE = Style.from_dict(
     {
@@ -23,7 +24,7 @@ class TerminalUI:
 
     def __init__(self, config, style: Style = STYLE) -> None:
         self.config = config
-        self.session = PromptSession()
+        self.session: PromptSession = PromptSession()
         self.style = style
 
     async def get_input(self) -> str:
@@ -38,9 +39,7 @@ class TerminalUI:
             if s := user_input.strip():
                 return s
 
-    async def render_stream(
-        self, events: AsyncGenerator[ThinkingEvent | ResponseEvent | ToolStartEvent | ToolEndEvent, None]
-    ) -> None:
+    async def render_stream(self, events: AsyncGenerator[Event, None]) -> None:
         """Consume and render a stream of chat events.
 
         Handles mode transitions between thinking, response, and tool events,

@@ -1,8 +1,10 @@
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
-from ..events import ResponseEvent, ThinkingEvent, ToolEndEvent, ToolStartEvent
+from ..events import (Event, ResponseEvent, ThinkingEvent, ToolEndEvent,
+                      ToolStartEvent)
 from ..tools import BaseTool
 from .provider import OllamaProvider, OpenAICompatibleProvider
 
@@ -25,13 +27,12 @@ class ChatBackend:
         self.model = model
         # self.client = OllamaProvider()
         self.client = OpenAICompatibleProvider("http://127.0.0.1:8000/v1")
-        self.messages: list[dict[str, str]] = [] if system_prompt is None else [system_prompt]
+        self.messages: list[dict[str, Any]] = [] if system_prompt is None else [system_prompt]
 
-        self.tools_instances = [tool(self.config) for tool in tools] if tools else None
-        self.tools_schemas = [tool.to_schema() for tool in tools] if tools else None
+        self.tools_instances = [tool(self.config) for tool in tools] if tools else []
+        self.tools_schemas = [tool.to_schema() for tool in tools] if tools else []
 
     async def _execute_tool(self, tool_name: str, arguments: dict) -> str:
-        """Execute a tool and return its result."""
         for tool_instance in self.tools_instances:
             if tool_instance.name == tool_name:
                 return await tool_instance.execute(**arguments)
@@ -39,27 +40,19 @@ class ChatBackend:
 
     async def stream(
         self, user_input: str | None = None
-    ) -> AsyncGenerator[ThinkingEvent | ResponseEvent | ToolStartEvent | ToolEndEvent, None]:
-        """Stream response events from the model.
-
-        Yields ThinkingEvent and ResponseEvent objects. Handles tool execution
-        internally—when the model calls tools, it yields ToolStartEvent for each,
-        executes them concurrently, yields ToolEndEvent as each completes,
-        and continues generating the response based on the tool outputs.
-        """
+    ) -> AsyncGenerator[Event, None]:  # AsyncGenerator[SendType, RecvType]
         if user_input is not None:
             self.messages.append({"role": "user", "content": user_input})
 
         while True:
             response = ""
-            tool_calls: list[dict] = []
+            tool_calls: list[dict[str, Any]] = []
 
             async for part in self.client.chat(
                 model=self.model,
                 messages=self.messages,
-                stream=True,
                 think=self.think,
-                tools=self.tools_schemas,
+                tools_schemas=self.tools_schemas,
             ):
                 if data := part.message.thinking:
                     yield ThinkingEvent(data)
@@ -74,7 +67,7 @@ class ChatBackend:
                         for tc in part.message.tool_calls
                     )
 
-            msg = {"role": "assistant", "content": response}
+            msg: dict[str, Any] = {"role": "assistant", "content": response}
             if tool_calls:
                 msg["tool_calls"] = tool_calls
             self.messages.append(msg)

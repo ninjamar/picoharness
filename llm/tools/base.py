@@ -1,23 +1,35 @@
+from abc import ABC, abstractmethod
+from typing import Any
+
 from ollama._utils import convert_function_to_tool
 
 
-class BaseTool:
-    """Base class for tools that can be called by the model."""
-
+class BaseTool(ABC):
     name: str = ""
 
     def __init__(self, config):
         self.config = config
 
     @classmethod
-    def to_schema(cls) -> dict:
-        """Convert a BaseTool class to Ollama/OpenAI-compatible JSON schema."""
+    def to_schema(cls) -> dict[str, Any]:
         tool = convert_function_to_tool(cls.execute)
-        del tool.function.parameters.properties["self"]
-        tool.function.parameters.required.remove("self")
+
+        # TODO: Remove asserts
+        assert tool is not None
+        assert tool.function is not None
+        assert tool.function.parameters is not None
+        assert tool.function.parameters.properties is not None
+        assert tool.function.parameters.required is not None
+
+        props = dict(tool.function.parameters.properties)
+        del props["self"]
+        tool.function.parameters.properties = props
+        required_list = list(tool.function.parameters.required)
+        required_list.remove("self")
+        tool.function.parameters.required = required_list
         tool.function.name = cls.name
         return tool.model_dump()
 
+    @abstractmethod
     async def execute(self, **kwargs) -> str:
-        """Execute the tool and return a result string."""
         raise NotImplementedError

@@ -1,6 +1,7 @@
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any, AsyncGenerator, Generator
 
 import ollama
 from openai import AsyncOpenAI
@@ -9,7 +10,7 @@ from openai import AsyncOpenAI
 @dataclass
 class ToolCallFunction:
     name: str
-    arguments: dict
+    arguments: dict[str, Any]
 
 
 @dataclass
@@ -33,28 +34,33 @@ class BaseProvider(ABC):
     """Base class for LLM providers."""
 
     @abstractmethod
-    async def chat(self, *, model, messages, stream, think, tools):
+    async def chat(
+        self, *, model: str, messages: list[dict[str, Any]], think: bool, tools_schemas: list[dict]
+    ) -> AsyncGenerator[ChatResponse, None]:
         """Call the chat API with the given parameters."""
-        pass
+        raise NotImplementedError
+        yield  # Need to satisfy AsyncGenerator type annotation
 
 
 class OllamaProvider(BaseProvider):
     """Manages the Ollama AsyncClient connection."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.client = ollama.AsyncClient()
 
-    async def chat(self, *, model, messages, stream, think, tools):
+    async def chat(
+        self, *, model: str, messages: list[dict[str, Any]], think: bool, tools_schemas: list[dict]
+    ) -> AsyncGenerator[ChatResponse, None]:
         """Call the Ollama chat API with the given parameters."""
         async for part in await self.client.chat(
             model=model,
             messages=messages,
-            stream=stream,
+            stream=True,  # always Stream
             think=think,
-            tools=tools,
+            tools=tools_schemas,
         ):
             tool_calls = [
-                ToolCall(function=ToolCallFunction(name=tc.function.name, arguments=tc.function.arguments))
+                ToolCall(function=ToolCallFunction(name=tc.function.name, arguments=dict(tc.function.arguments)))
                 for tc in (part.message.tool_calls or [])
             ]
             yield ChatResponse(
@@ -67,20 +73,19 @@ class OllamaProvider(BaseProvider):
 
 
 class OpenAICompatibleProvider(BaseProvider):
-    """Manages OpenAI-compatible API client connection."""
-
-    def __init__(self, base_url: str, api_key: str = ""):
+    def __init__(self, base_url: str, api_key: str = "") -> None:
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
-    async def chat(self, *, model, messages, stream, think, tools):
-        """Call the OpenAI-compatible chat API with the given parameters."""
-        accum: dict[int, dict] = {}
+    async def chat(
+        self, *, model: str, messages: list[dict[str, Any]], think: bool, tools_schemas: list[dict]
+    ) -> AsyncGenerator[ChatResponse, None]:
+        accum: dict[int, dict[str, str]] = {}
 
-        async for chunk in await self.client.chat.completions.create(
+        async for chunk in await self.client.chat.completions.create(  # type: ignore
             model=model,
             messages=messages,
-            stream=stream,
-            tools=tools,
+            stream=True,
+            tools=tools_schemas,
             reasoning_effort="high" if think else "none",
         ):
             delta = chunk.choices[0].delta if chunk.choices else None
