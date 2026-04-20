@@ -6,6 +6,8 @@ from typing import Any, AsyncGenerator, Generator
 import ollama
 from openai import AsyncOpenAI
 
+from ..tools import BaseTool
+
 
 @dataclass
 class ToolCallFunction:
@@ -31,33 +33,31 @@ class ChatResponse:
 
 
 class BaseProvider(ABC):
-    """Base class for LLM providers."""
+    def __init__(self, tools: list[type[BaseTool]]) -> None:
+        self.tools_schemas = [tool.to_schema() for tool in tools]
 
     @abstractmethod
     async def chat(
-        self, *, model: str, messages: list[dict[str, Any]], think: bool, tools_schemas: list[dict]
+        self, *, model: str, messages: list[dict[str, Any]], think: bool
     ) -> AsyncGenerator[ChatResponse, None]:
-        """Call the chat API with the given parameters."""
         raise NotImplementedError
         yield  # Need to satisfy AsyncGenerator type annotation
 
 
 class OllamaProvider(BaseProvider):
-    """Manages the Ollama AsyncClient connection."""
-
-    def __init__(self) -> None:
+    def __init__(self, tools: list[type[BaseTool]]) -> None:
+        super().__init__(tools)
         self.client = ollama.AsyncClient()
 
     async def chat(
-        self, *, model: str, messages: list[dict[str, Any]], think: bool, tools_schemas: list[dict]
+        self, *, model: str, messages: list[dict[str, Any]], think: bool
     ) -> AsyncGenerator[ChatResponse, None]:
-        """Call the Ollama chat API with the given parameters."""
         async for part in await self.client.chat(
             model=model,
             messages=messages,
             stream=True,  # always Stream
             think=think,
-            tools=tools_schemas,
+            tools=self.tools_schemas,
         ):
             tool_calls = [
                 ToolCall(function=ToolCallFunction(name=tc.function.name, arguments=dict(tc.function.arguments)))
@@ -73,33 +73,61 @@ class OllamaProvider(BaseProvider):
 
 
 class OpenAICompatibleProvider(BaseProvider):
-    def __init__(self, base_url: str, api_key: str = "") -> None:
+    def __init__(self, base_url: str, tools: list[type[BaseTool]], api_key: str = "") -> None:
+        super().__init__(tools)
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
     async def chat(
-        self, *, model: str, messages: list[dict[str, Any]], think: bool, tools_schemas: list[dict]
+        self, *, model: str, messages: list[dict[str, Any]], think: bool
     ) -> AsyncGenerator[ChatResponse, None]:
+
+        serialized_messages = []
+        for message in messages:
+            if "tool_calls" in message:
+                msg_copy = dict(message)
+                msg_copy["tool_calls"] = [
+                    {
+                        **tc,
+                        "function": {
+                            **tc["function"],
+                            "arguments": (
+                                tc["function"]["arguments"]
+                                if isinstance(tc["function"]["arguments"], str)
+                                else json.dumps(tc["function"]["arguments"])
+                            ),
+                        },
+                    }
+                    for tc in message["tool_calls"]
+                ]
+                serialized_messages.append(msg_copy)
+            else:
+                serialized_messages.append(message)
+
         accum: dict[int, dict[str, str]] = {}
 
         async for chunk in await self.client.chat.completions.create(  # type: ignore
             model=model,
-            messages=messages,
+            messages=serialized_messages,
             stream=True,
-            tools=tools_schemas,
+            tools=self.tools_schemas,
             reasoning_effort="high" if think else "none",
         ):
             delta = chunk.choices[0].delta if chunk.choices else None
             if not delta:
                 continue
-
-            thinking = getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None)
+            # print(delta)
+            thinking = (
+                getattr(delta, "reasoning_content", None)
+                or getattr(delta, "reasoning", None)
+                or getattr(delta, "thinking", None)
+            )
             if thinking:
                 yield ChatResponse(message=ChatMessage(thinking=thinking))
 
             if delta.content:
                 yield ChatResponse(message=ChatMessage(content=delta.content))
 
-            for tc in delta.tool_calls or []:
+            for tc in delta.tool_calls or []:  # delta.tool_calls could be None
                 if tc.index not in accum:
                     accum[tc.index] = {"name": tc.function.name, "arguments": ""}
                 accum[tc.index]["arguments"] += tc.function.arguments or ""

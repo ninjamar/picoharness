@@ -20,8 +20,6 @@ STYLE = Style.from_dict(
 
 
 class TerminalUI:
-    """Handles terminal I/O: prompts, styled output, and formatted text rendering."""
-
     def __init__(self, config, style: Style = STYLE) -> None:
         self.config = config
         self.session: PromptSession = PromptSession()
@@ -40,11 +38,6 @@ class TerminalUI:
                 return s
 
     async def render_stream(self, events: AsyncGenerator[Event, None]) -> None:
-        """Consume and render a stream of chat events.
-
-        Handles mode transitions between thinking, response, and tool events,
-        emitting newlines at boundaries to separate different output types.
-        """
         prev_mode: str | None = None
 
         async for event in events:

@@ -32,4 +32,8 @@ class BaseTool(ABC):
 
     @abstractmethod
     async def execute(self, **kwargs) -> str:
+        """
+        IMPORTANT: Do not add any other parameters exept for what is needed as tool calls are constructed from the annotation
+        For example, having kwargs in the annotation will pass it to the ai
+        """
         raise NotImplementedError

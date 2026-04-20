@@ -7,8 +7,10 @@ from .tools.agent import AgentTool
 
 # DEFAULT_MODEL = "lfm2.5-thinking:latest"
 # DEFAULT_AGENT_MODEL = "lfm2.5-thinking:latest"
-DEFAULT_MODEL = "Qwen3.5-4B-MLX-4bit"
-DEFAULT_AGENT_MODEL = "Qwen3.5-4B-MLX-4bit"
+DEFAULT_MODEL = "qwen3.5:0.8b"
+DEFAULT_AGENT_MODEL = "qwen3.5:0.8b"
+# DEFAULT_MODEL = "Qwen3.5-4B-MLX-4bit"
+# DEFAULT_AGENT_MODEL = "Qwen3.5-4B-MLX-4bit"
 
 
 async def main(

@@ -19,7 +19,7 @@ class Agent:
 class AgentTool(BaseTool):
     name = "agent"
 
-    async def execute(self, **kwargs) -> str:
+    async def execute(self, prompt: str) -> str:
         """
         Spawn a sub-agent to complete a task or generate an output described in prompt
 
@@ -29,5 +29,4 @@ class AgentTool(BaseTool):
         Returns:
             The output from the agent
         """
-        prompt: str = kwargs.pop("prompt")
         return await self.config.spawn_agent(prompt).get_output()
