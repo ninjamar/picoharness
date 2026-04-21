@@ -1,7 +1,7 @@
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Generator
+from typing import Any, AsyncGenerator
 
 import ollama
 from openai import AsyncOpenAI

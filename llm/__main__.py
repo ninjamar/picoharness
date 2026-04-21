@@ -2,6 +2,7 @@ import argparse
 import asyncio
 
 from .config import Configuration
+from .state import set_config
 from .tools import BaseTool, ReadFileTool
 from .tools.agent import AgentTool
 
@@ -26,6 +27,7 @@ async def main(
         think=think,
         tools=tools or [],
     )
+    set_config(config)
     backend = config.spawn_backend()
     ui = config.spawn_terminal_ui()
 

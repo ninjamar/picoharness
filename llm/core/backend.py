@@ -1,5 +1,4 @@
 import asyncio
-import json
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -13,14 +12,11 @@ from .provider import OllamaProvider, OpenAICompatibleProvider
 class ChatBackend:
     def __init__(
         self,
-        config,
         model: str,
         think: bool,
         system_prompt: dict[str, str] | None = None,
         tools: list[type[BaseTool]] | None = None,
     ) -> None:
-        self.config = config
-
         self.think = think
 
         self.model = model
@@ -28,7 +24,7 @@ class ChatBackend:
         self.client = OpenAICompatibleProvider("http://127.0.0.1:11434/v1", tools=tools or [])
         self.messages: list[dict[str, Any]] = [] if system_prompt is None else [system_prompt]
 
-        self.tools_instances = [tool(self.config) for tool in tools] if tools else []
+        self.tools_instances = [tool() for tool in tools] if tools else []
 
     async def _execute_tool(self, tool_name: str, arguments: dict) -> str:
         for tool_instance in self.tools_instances:

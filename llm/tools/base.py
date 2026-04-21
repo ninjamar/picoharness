@@ -7,8 +7,8 @@ from ollama._utils import convert_function_to_tool
 class BaseTool(ABC):
     name: str = ""
 
-    def __init__(self, config):
-        self.config = config
+    def __init__(self) -> None:
+        pass
 
     @classmethod
     def to_schema(cls) -> dict[str, Any]:

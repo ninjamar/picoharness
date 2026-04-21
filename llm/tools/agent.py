@@ -1,5 +1,6 @@
 from ..core.backend import ChatBackend
 from ..events import ResponseEvent
+from ..state import get_config
 from .base import BaseTool
 
 
@@ -29,4 +30,4 @@ class AgentTool(BaseTool):
         Returns:
             The output from the agent
         """
-        return await self.config.spawn_agent(prompt).get_output()
+        return await get_config().spawn_agent(prompt).get_output()

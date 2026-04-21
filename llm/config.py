@@ -34,7 +34,6 @@ class Configuration:
 
     def spawn_backend(self) -> ChatBackend:
         return ChatBackend(
-            self,
             model=self.model,
             think=self.think,
             system_prompt=self.system_prompt,
@@ -46,7 +45,6 @@ class Configuration:
 
     def spawn_agent(self, prompt: str) -> "Agent":
         backend = ChatBackend(
-            self,
             model=self.agent_model,
             think=self.think,
             system_prompt=self.agent_system_prompt,
