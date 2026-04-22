@@ -3,15 +3,16 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from ..events import (Event, ResponseEvent, ThinkingEvent, ToolEndEvent,
-                      ToolStartEvent)
+from ..events import Event, ResponseEvent, ThinkingEvent, ToolEndEvent, ToolStartEvent
 from ..tools import BaseTool
-from .provider import OllamaProvider, OpenAICompatibleProvider
+from .provider import BaseProvider
 
 
 class ChatBackend:
     def __init__(
         self,
+        *,
+        provider: BaseProvider,
         model: str,
         think: bool,
         system_prompt: dict[str, str] | None = None,
@@ -20,8 +21,7 @@ class ChatBackend:
         self.think = think
 
         self.model = model
-        # self.client = OllamaProvider(tools=tools or [])
-        self.client = OpenAICompatibleProvider("http://127.0.0.1:11434/v1", tools=tools or [])
+        self.provider = provider
         self.messages: list[dict[str, Any]] = [] if system_prompt is None else [system_prompt]
 
         self.tools_instances = [tool() for tool in tools] if tools else []
@@ -42,7 +42,7 @@ class ChatBackend:
             response = ""
             tool_calls: list[dict[str, Any]] = []
 
-            async for part in self.client.chat(
+            async for part in self.provider.chat(
                 model=self.model,
                 messages=self.messages,
                 think=self.think,

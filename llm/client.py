@@ -5,8 +5,7 @@ from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
-from .events import (Event, ResponseEvent, ThinkingEvent, ToolEndEvent,
-                     ToolStartEvent)
+from .events import Event, ResponseEvent, ThinkingEvent, ToolEndEvent, ToolStartEvent
 
 STYLE = Style.from_dict(
     {
@@ -20,8 +19,7 @@ STYLE = Style.from_dict(
 
 
 class TerminalUI:
-    def __init__(self, config, style: Style = STYLE) -> None:
-        self.config = config
+    def __init__(self, style: Style = STYLE) -> None:
         self.session: PromptSession = PromptSession()
         self.style = style
 

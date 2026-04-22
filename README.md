@@ -1,3 +1,9 @@
 **The Problem:** Developers want to run AI agents locally on their computers for privacy and cost, but every CLI agent tool treats local models as an afterthought. They route through cloud-compatible APIs that break tool calling, use bloated system prompts designed for cloud models, and fail silently when attempting tasks like web search or file operations. Meanwhile, local models like Qwen 3 have gotten *good enough* — benchmarks show they match GPT-4 on accuracy — but the tooling hasn't caught up. You end up with beautiful chat responses but zero actual actions.
 
 **The Solution:** A lightweight CLI agent built from the ground up for local models running on Ollama. It supports tool calling for web search, file operations, shell commands, and other tools without the bloat and failures of existing agents. Minimal system prompt overhead. No broken streaming. No silent tool-call failures. Just a fast, efficient agent that actually executes on your machine, keeps your data private, and doesn't compromise functionality.
+
+
+# Things
+
+Ollama and OMLX models seem to have different personalities.
+Eg qwen:0.8b on ollama can think and is quite professional. Qwen3.5-0.8B-MLX-4bit seems to be quite straightforward and less polished --but it is very concise.

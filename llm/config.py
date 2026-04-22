@@ -2,6 +2,7 @@ from pathlib import Path
 
 from .client import STYLE, Style, TerminalUI
 from .core.backend import ChatBackend
+from .core.provider import *
 from .tools import BaseTool
 from .tools.agent import Agent
 
@@ -20,6 +21,7 @@ class Configuration:
         agent_system_prompt: dict[str, str] | None = AGENT_SYSTEM_PROMPT,
         tools: list[type[BaseTool]] | None = None,
         style: Style = STYLE,
+        provider: str = "ollama",
     ) -> None:
         self.model = model
         self.agent_model = agent_model
@@ -32,8 +34,18 @@ class Configuration:
         self.tools = tools or []
         self.style = style
 
+        self.provider = provider
+        self.provider_instance = self._spawn_provider_instance()
+
+    def _spawn_provider_instance(self) -> BaseProvider:
+        if self.provider == "ollama":
+            return OllamaProvider(tools=self.tools)
+        else:
+            return OpenAICompatibleProvider(f"http://{self.provider}/v1", tools=self.tools)
+
     def spawn_backend(self) -> ChatBackend:
         return ChatBackend(
+            provider=self.provider_instance,
             model=self.model,
             think=self.think,
             system_prompt=self.system_prompt,
@@ -41,14 +53,14 @@ class Configuration:
         )
 
     def spawn_terminal_ui(self) -> TerminalUI:
-        return TerminalUI(self, style=self.style)
+        return TerminalUI(style=self.style)
 
     def spawn_agent(self, prompt: str) -> "Agent":
         backend = ChatBackend(
+            provider=self.provider_instance,
             model=self.agent_model,
             think=self.think,
             system_prompt=self.agent_system_prompt,
-            # No tools yet because it loops subagent
-            # tools=self.tools,
+            tools=[],
         )
         return Agent(backend=backend, prompt=prompt)

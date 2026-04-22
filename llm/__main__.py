@@ -6,18 +6,12 @@ from .state import set_config
 from .tools import BaseTool, ReadFileTool
 from .tools.agent import AgentTool
 
-# DEFAULT_MODEL = "lfm2.5-thinking:latest"
-# DEFAULT_AGENT_MODEL = "lfm2.5-thinking:latest"
-DEFAULT_MODEL = "qwen3.5:0.8b"
-DEFAULT_AGENT_MODEL = "qwen3.5:0.8b"
-# DEFAULT_MODEL = "Qwen3.5-4B-MLX-4bit"
-# DEFAULT_AGENT_MODEL = "Qwen3.5-4B-MLX-4bit"
-
 
 async def main(
+    model: str,
+    agent_model: str,
+    provider: str,
     tools: list[type[BaseTool]] | None = None,
-    model: str = DEFAULT_MODEL,
-    agent_model: str = DEFAULT_AGENT_MODEL,
     think: bool = True,
 ):
     """Run the interactive chat application."""
@@ -26,6 +20,7 @@ async def main(
         agent_model=agent_model,
         think=think,
         tools=tools or [],
+        provider=provider,
     )
     set_config(config)
     backend = config.spawn_backend()
@@ -48,9 +43,19 @@ async def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--agent-model", default=DEFAULT_AGENT_MODEL)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--agent-model", default=None)
     parser.add_argument("--think", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--provider", required=True)
     args = parser.parse_args()
 
-    asyncio.run(main([AgentTool, ReadFileTool], model=args.model, agent_model=args.agent_model, think=args.think))
+    args.agent_model = args.agent_model or args.model
+
+    app = main(
+        tools=[AgentTool, ReadFileTool],
+        model=args.model,
+        agent_model=args.agent_model,
+        think=args.think,
+        provider=args.provider,
+    )
+    asyncio.run(app)
