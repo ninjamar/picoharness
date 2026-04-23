@@ -3,7 +3,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from ..events import Event, ResponseEvent, ThinkingEvent, ToolEndEvent, ToolStartEvent
+from ..events import *
 from ..tools import BaseTool
 from .provider import BaseProvider
 
@@ -37,6 +37,7 @@ class ChatBackend:
     ) -> AsyncGenerator[Event, None]:  # AsyncGenerator[SendType, RecvType]
         if user_input is not None:
             self.messages.append({"role": "user", "content": user_input})
+            yield UserInputEvent(user_input)
 
         while True:
             response = ""

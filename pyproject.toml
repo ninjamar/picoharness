@@ -1,5 +1,5 @@
 [project]
-name = "localai"
+name = "llm"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -8,8 +8,16 @@ dependencies = [
     "ollama>=0.6.1",
     "omlx",
     "openai>=2.32.0",
-    "prompt-toolkit>=3.0.52",
+    "blessed>=1.20.0",
 ]
+[project.scripts]
+llm-cli = "llm.cli:cli"
+
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+include = ["llm"]
 
 [dependency-groups]
 dev = [
@@ -17,7 +25,6 @@ dev = [
     "ruff>=0.15.10",
     "ty>=0.0.29",
 ]
-
 [tool.ruff]
 line-length=120
 

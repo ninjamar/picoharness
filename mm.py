@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,7 +28,19 @@ def pull(repo_model: str) -> None:
 
     url = f"https://huggingface.co/{model_id}"
     print(f"Downloading {model_id} to {target_dir}...")
-    subprocess.run(["git", "clone", "--progress", url, str(target_dir)], check=True)
+
+    # Clone without LFS to show proper progress
+    env = os.environ.copy()
+    env["GIT_LFS_SKIP_SMUDGE"] = "1"
+    subprocess.run(["git", "clone", "--progress", url, str(target_dir)], check=True, env=env)
+
+    # Pull LFS files with proper progress display
+    print("Fetching model files...")
+    subprocess.run(["git", "lfs", "pull"], cwd=target_dir, check=True)
+
+    print("Removing .git/lfs directory (prune history)")
+    subprocess.run(["rm", "-rf", ".git/lfs"], cwd=target_dir, check=True)
+
     print(f"Successfully installed {model_id}")
 
 

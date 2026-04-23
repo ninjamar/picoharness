@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from .client import STYLE, Style, TerminalUI
 from .core.backend import ChatBackend
 from .core.provider import *
 from .tools import BaseTool
 from .tools.agent import Agent
+from .ui import ChatApp
 
 SYSTEM_PROMPT = {"role": "system", "content": (Path(__file__).parent / "system_prompt.md").read_text()}
 
@@ -20,7 +20,6 @@ class Configuration:
         system_prompt: dict[str, str] | None = SYSTEM_PROMPT,
         agent_system_prompt: dict[str, str] | None = AGENT_SYSTEM_PROMPT,
         tools: list[type[BaseTool]] | None = None,
-        style: Style = STYLE,
         provider: str = "ollama",
     ) -> None:
         self.model = model
@@ -32,7 +31,6 @@ class Configuration:
         self.agent_system_prompt = agent_system_prompt
 
         self.tools = tools or []
-        self.style = style
 
         self.provider = provider
         self.provider_instance = self._spawn_provider_instance()
@@ -52,8 +50,8 @@ class Configuration:
             tools=self.tools,
         )
 
-    def spawn_terminal_ui(self) -> TerminalUI:
-        return TerminalUI(style=self.style)
+    def spawn_terminal_ui(self, backend: ChatBackend) -> ChatApp:
+        return ChatApp(backend=backend)
 
     def spawn_agent(self, prompt: str) -> "Agent":
         backend = ChatBackend(

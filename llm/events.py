@@ -1,9 +1,17 @@
 from dataclasses import dataclass
 
 
+
 @dataclass
 class Event:
     pass
+
+
+@dataclass
+class UserInputEvent(Event):
+    """User input into model"""
+
+    text: str
 
 
 @dataclass
