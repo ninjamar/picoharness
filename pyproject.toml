@@ -9,6 +9,7 @@ dependencies = [
     "omlx",
     "openai>=2.32.0",
     "blessed>=1.20.0",
+    "prompt-toolkit>=3.0.52",
 ]
 [project.scripts]
 llm-cli = "llm.cli:cli"

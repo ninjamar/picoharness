@@ -7,14 +7,8 @@ from dataclasses import dataclass, field
 import blessed
 
 from ..core.backend import ChatBackend
-from ..events import (
-    Event,
-    ResponseEvent,
-    ThinkingEvent,
-    ToolEndEvent,
-    ToolStartEvent,
-    UserInputEvent,
-)
+from ..events import (Event, ResponseEvent, ThinkingEvent, ToolEndEvent,
+                      ToolStartEvent, UserInputEvent)
 
 
 @dataclass
@@ -38,7 +32,7 @@ def _print_event(term: blessed.Terminal, event: Event, show_thinking: bool, last
                 print()
 
             print(fragment, end="", flush=True)
-            
+
         case ToolStartEvent(id=tool_id, name=name, input=inp):
             inp_str = json.dumps(inp) if isinstance(inp, dict) else str(inp)
             print(f"\n{term.bold_blue(f'[tool] {name}({inp_str})')} ...", flush=True)
@@ -54,11 +48,7 @@ class ChatApp:
 
     def run(self) -> None:
         """Run the chat loop using character-at-a-time input with blessed."""
-        print(
-            self._term.bold(
-                "Chat started. Press Ctrl+V to toggle thinking, Ctrl+C to quit.\n"
-            )
-        )
+        print(self._term.bold("Chat started. Press Ctrl+V to toggle thinking, Ctrl+C to quit.\n"))
         asyncio.run(self._run_async())
 
     async def _run_async(self) -> None:
@@ -66,7 +56,7 @@ class ChatApp:
         while True:
             try:
                 user_text = self._read_line()
-            except (KeyboardInterrupt, EOFError):
+            except KeyboardInterrupt, EOFError:
                 print("\nBye.")
                 break
 
