@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, field
 
 import blessed
+from prompt_toolkit import PromptSession
 
 from ..core.backend import ChatBackend
 from ..events import (Event, ResponseEvent, ThinkingEvent, ToolEndEvent,
@@ -44,6 +45,8 @@ class ChatApp:
     def __init__(self, backend: ChatBackend) -> None:
         self._backend = backend
         self._term = blessed.Terminal()
+        self._prompt = PromptSession()
+
         self._show_thinking = True
 
     def run(self) -> None:
@@ -55,7 +58,7 @@ class ChatApp:
         """Async chat loop."""
         while True:
             try:
-                user_text = self._read_line()
+                user_text = await self._read_line()
             except KeyboardInterrupt, EOFError:
                 print("\nBye.")
                 break
@@ -68,37 +71,13 @@ class ChatApp:
             await self._stream_turn(turn)
             print()
 
-    def _read_line(self) -> str:
+    async def _read_line(self) -> str:
         """Read a line from the terminal, detecting Ctrl+V for thinking toggle."""
         with self._term.cbreak():
             prompt = self._term.bold_green(">>> ")
             print(prompt, end="", flush=True)
 
-            line = ""
-            while True:
-                key = self._term.inkey(timeout=None)
-
-                if key.code == self._term.KEY_ENTER:
-                    print()
-                    return line.strip()
-                elif key.code == self._term.KEY_BACKSPACE:
-                    if line:
-                        line = line[:-1]
-                        print(f"\b \b", end="", flush=True)
-                elif key == "\x16":  # Ctrl+V
-                    self._show_thinking = not self._show_thinking
-                    state = "on" if self._show_thinking else "off"
-                    print(f"\r{self._term.dim(f'[thinking {state}]')}\n{prompt}", end="", flush=True)
-                elif key.is_sequence:
-                    # ignore other control sequences
-                    pass
-                elif ord(key) >= 32:  # printable ASCII
-                    line += key
-                    print(key, end="", flush=True)
-                elif key.code == self._term.KEY_ESCAPE:
-                    raise KeyboardInterrupt
-                elif key == "\x04":  # Ctrl+D
-                    raise EOFError
+            return await self._prompt.prompt_async()
 
     async def _stream_turn(self, turn: ConversationTurn) -> None:
         """Stream the backend response for a turn."""
