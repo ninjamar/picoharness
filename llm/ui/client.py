@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import re
 from dataclasses import dataclass, field
 
 import blessed
 from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import ANSI
 
 from ..core.backend import ChatBackend
 from ..events import (Event, ResponseEvent, ThinkingEvent, ToolEndEvent,
                       ToolStartEvent, UserInputEvent)
+
+_ISO2022_RE = re.compile(r"\x1b[()][0-9A-Za-z]")
 
 
 @dataclass
@@ -51,33 +56,44 @@ class ChatApp:
 
     def run(self) -> None:
         """Run the chat loop using character-at-a-time input with blessed."""
-        print(self._term.bold("Chat started. Press Ctrl+V to toggle thinking, Ctrl+C to quit.\n"))
-        asyncio.run(self._run_async())
+        print(self._term.bold("Chat started. Press Ctrl+C to quit.\n"))
+        loop = asyncio.new_event_loop()
+        try:
+            while True:
+                try:
+                    user_text = loop.run_until_complete(self._read_line())
+                except KeyboardInterrupt, EOFError:
+                    print("\nBye.")
+                    break
 
-    async def _run_async(self) -> None:
-        """Async chat loop."""
-        while True:
-            try:
-                user_text = await self._read_line()
-            except KeyboardInterrupt, EOFError:
-                print("\nBye.")
-                break
+                if not user_text:
+                    continue
 
-            if not user_text:
-                continue
-
-            turn = ConversationTurn(user_input=user_text)
-            # print(self._term.bold_green(f">>> {user_text}"))
-            await self._stream_turn(turn)
-            print()
+                turn = ConversationTurn(user_input=user_text)
+                task = loop.create_task(self._stream_turn(turn))
+                try:
+                    loop.run_until_complete(task)
+                except KeyboardInterrupt:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        loop.run_until_complete(task)
+                    print()
+                print()
+        finally:
+            loop.close()
 
     async def _read_line(self) -> str:
-        """Read a line from the terminal, detecting Ctrl+V for thinking toggle."""
-        with self._term.cbreak():
-            prompt = self._term.bold_green(">>> ")
-            print(prompt, end="", flush=True)
+        """Read a line from the terminal"""
 
-            return await self._prompt.prompt_async()
+        return await self._prompt.prompt_async(
+            # The prompt needs to be included in this function so it can be synced with the input.
+            message=ANSI(
+                # However, the ANSI class (which handles the escape codes from blessed) doesn't
+                # support some of blessed's generated output --a zero width character or something.
+                # So, a regex is used to remove it.
+                _ISO2022_RE.sub("", self._term.bold_green(">>> "))
+            )
+        )
 
     async def _stream_turn(self, turn: ConversationTurn) -> None:
         """Stream the backend response for a turn."""
