@@ -34,16 +34,33 @@ def _print_event(term: blessed.Terminal, event: Event, show_thinking: bool, last
         case ResponseEvent(text=fragment):
             if isinstance(last_event, ThinkingEvent):
                 # Add newline when transitioning from thinking to response
-
                 print()
 
             print(fragment, end="", flush=True)
 
         case ToolStartEvent(id=tool_id, name=name, input=inp):
-            inp_str = json.dumps(inp) if isinstance(inp, dict) else str(inp)
-            print(f"\n{term.bold_blue(f'[tool] {name}({inp_str})')} ...", flush=True)
+            if isinstance(inp, dict):
+                if len(a := list(zip(inp.keys(), inp.values()))) == 1:
+                    fmt = a[0][1]
+                else:
+                    fmt = ",".join([f'{k}={v!r}' for k, v in a])
+            else:
+                fmt = str(inp)
+            """
+            Agent("Foobar")
+                baz bar qaz
+            """
+
+            print(term.bold_blue(f"\n{name}(\"{fmt})\""), flush=True)
         case ToolEndEvent(id=tool_id, output=output):
-            print(term.bold_blue(f"  → {output}"), flush=True)
+            output_str = str(output)
+            pad = '\t'
+            
+            wrapped_lines = term.wrap(output_str, width=term.width - term.length(pad))
+
+            for line in wrapped_lines:
+                print(term.cyan(pad + line), flush=True)
+            # print(term.bold_blue(f"\t{output}"), flush=True)
 
 
 class ChatApp:
