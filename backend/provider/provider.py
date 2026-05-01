@@ -120,7 +120,7 @@ class OpenAICompatibleProvider(BaseProvider):
             model=model,
             messages=serialized_messages,
             stream=True,
-            tools=self.tools_schemas,
+            tools=self.tools_schemas, # type: ignore
             reasoning_effort="high" if think else "none",
         ):
             delta = chunk.choices[0].delta if chunk.choices else None

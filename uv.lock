@@ -582,13 +582,14 @@ wheels = [
 [[package]]
 name = "llm"
 version = "0.1.0"
-source = { editable = "." }
+source = { virtual = "." }
 dependencies = [
     { name = "blessed" },
     { name = "ollama" },
     { name = "omlx" },
     { name = "openai" },
     { name = "prompt-toolkit" },
+    { name = "rich" },
 ]
 
 [package.dev-dependencies]
@@ -608,6 +609,7 @@ requires-dist = [
     { name = "omlx", git = "https://github.com/jundot/omlx.git" },
     { name = "openai", specifier = ">=2.32.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
+    { name = "rich", specifier = ">=13.0" },
 ]
 
 [package.metadata.requires-dev]
