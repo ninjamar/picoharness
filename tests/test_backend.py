@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend import Backend
-from backend.events import DoneEvent, ResponseEvent, ThinkingEvent, ToolFinishEvent, ToolStartEvent, UserInputEvent
-from backend.provider.provider import _ChatMessage, _ChatResponse, _ToolCall, _ToolCallFunction
+from backend.events import (DoneEvent, ResponseEvent, ThinkingEvent,
+                            ToolFinishEvent, ToolStartEvent, UserInputEvent)
+from backend.provider.provider import (_ChatMessage, _ChatResponse, _ToolCall,
+                                       _ToolCallFunction)
 from backend.tools import ReadFileTool
 
 

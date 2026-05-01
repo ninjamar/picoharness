@@ -3,15 +3,8 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from backend.events import (
-    DoneEvent,
-    Event,
-    ResponseEvent,
-    ThinkingEvent,
-    ToolFinishEvent,
-    ToolStartEvent,
-    UserInputEvent,
-)
+from backend.events import (DoneEvent, Event, ResponseEvent, ThinkingEvent,
+                            ToolFinishEvent, ToolStartEvent, UserInputEvent)
 from backend.provider.provider import BaseProvider
 from backend.tools import BaseTool, ReadFileTool
 

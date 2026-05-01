@@ -4,18 +4,13 @@ import uuid
 from collections.abc import AsyncGenerator
 
 from prompt_toolkit import PromptSession
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
+from rich.markdown import Markdown
+from rich.text import Text
 
-from backend import (
-    Backend,
-    DoneEvent,
-    Event,
-    ResponseEvent,
-    ThinkingEvent,
-    ToolFinishEvent,
-    ToolStartEvent,
-    UserInputEvent,
-)
+from backend import (Backend, DoneEvent, Event, ResponseEvent, ThinkingEvent,
+                     ToolFinishEvent, ToolStartEvent, UserInputEvent)
 from backend.backend import ALLOWED_TOOLS
 from backend.provider.provider import OllamaProvider, OpenAICompatibleProvider
 
@@ -31,11 +26,22 @@ def _fmt_tool_input(inp: dict | str) -> str:
     return ", ".join(f"{k}={v!r}" for k, v in items)
 
 
+def _build_live(thinking_buf: list[str], response_buf: list[str]):
+    """Combine thinking and response buffers into a single renderable."""
+    parts = []
+    if thinking_buf:
+        parts.append(Text("".join(thinking_buf), style="dim italic"))
+    if response_buf:
+        parts.append(Markdown("".join(response_buf)))
+    return Group(*parts) if parts else Group()
+
+
 class ChatFrontend:
     def __init__(self, backend: Backend) -> None:
         self._backend = backend
         self._console = Console(highlight=False, markup=True)
         self._prompt = PromptSession()
+        self._live: Live | None = None
 
     def run(self) -> None:
         """Sync entry point — creates event loop and runs the chat."""
@@ -48,7 +54,7 @@ class ChatFrontend:
             while True:
                 try:
                     user_text = await self._read_input()
-                except (KeyboardInterrupt, EOFError):
+                except KeyboardInterrupt, EOFError:
                     self._console.print("\n[dim]Bye.[/dim]")
                     break
                 if not user_text.strip():
@@ -62,27 +68,35 @@ class ChatFrontend:
         return await self._prompt.prompt_async("> ")
 
     async def _collect_turn(self, input_id: str, events_gen: AsyncGenerator) -> None:
-        last_was_thinking = False
-        async for event in events_gen:
-            if event.id != input_id:
-                continue
-            self._render_event(event, last_was_thinking)
-            last_was_thinking = isinstance(event, ThinkingEvent)
-            if isinstance(event, DoneEvent) and event.id == input_id:
-                if event.error:
-                    self._console.print(f"\n[red]Error: {event.error}[/red]")
-                break
+        response_buf = []
+        thinking_buf = []
+        with Live(console=self._console, auto_refresh=False) as live:
+            async for event in events_gen:
+                if event.id != input_id:
+                    # TODO: This doesn't handle a non-linear flow: other events are just dropped
+                    # What should happen: events are always caught, then they are put in a queue.
+                    # Then this function would operate on that queue
+                    continue
+                self._render_event(live, response_buf, thinking_buf, event)
+                if isinstance(event, DoneEvent) and event.id == input_id:
+                    # This should NOT be in _render_event as _collecting turn stops here.
+                    # Only rendered in case of error
+                    if event.error:
+                        self._console.print(f"\n[red]Error: {event.error}[/red]")
+                    break
 
-    def _render_event(self, event: Event, last_was_thinking: bool) -> None:
+    def _render_event(self, live: Live, response_buf: list, thinking_buf: list, event: Event) -> None:
         match event:
             case UserInputEvent():
                 pass
             case ThinkingEvent(text=text):
-                self._console.print(text, end="", style="dim italic", markup=False)
+                thinking_buf.append(text)
+                live.update(_build_live(thinking_buf, response_buf))
+                live.refresh()
             case ResponseEvent(text=text):
-                if last_was_thinking:
-                    self._console.print()
-                self._console.print(text, end="", markup=False)
+                response_buf.append(text)
+                live.update(_build_live(thinking_buf, response_buf))
+                live.refresh()
             case ToolStartEvent(tool_name=name, tool_input=inp):
                 fmt = _fmt_tool_input(inp)
                 self._console.print(f"\n⏺ {name}({fmt})", style="bold blue")
