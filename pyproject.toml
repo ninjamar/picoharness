@@ -23,6 +23,7 @@ include = ["llm"]
 [dependency-groups]
 dev = [
     "isort>=8.0.1",
+    "pyright>=1.1.409",
     "ruff>=0.15.10",
     "ty>=0.0.29",
 ]
@@ -31,3 +32,6 @@ line-length=120
 
 [tool.uv.sources]
 omlx = { git = "https://github.com/jundot/omlx.git" }
+
+[tool.pyright]
+# typeCheckingMode = "strict"
