@@ -1,21 +1,34 @@
 from dataclasses import dataclass
 
-__all__ = ["Event", "UserInputEvent", "ThinkingEvent", "ResponseEvent", "ToolStartEvent", "ToolFinishEvent"]
+__all__ = [
+    "Event",
+    "UserInputEvent",
+    "ThinkingEvent",
+    "ResponseEvent",
+    "ToolStartEvent",
+    "ToolFinishEvent",
+    "DoneEvent",
+]
+
+
 @dataclass
 class Event:
-    id: str # ID of sequence
-    text: str | None # Text
-    error: str | None # Error message
+    id: str  # ID of sequence
+    text: str | None  # Text
+    error: str | None  # Error message
+
 
 @dataclass
 class UserInputEvent(Event):
     # Pass your id and message (through text)
     pass
 
+
 @dataclass
 class ThinkingEvent(Event):
     # Model thinks in text
     pass
+
 
 @dataclass
 class ResponseEvent(Event):
@@ -25,7 +38,7 @@ class ResponseEvent(Event):
 
 @dataclass
 class ToolStartEvent(Event):
-    tool_id: str # To match with tool finish event
+    tool_id: str  # To match with tool finish event
     tool_name: str
     tool_input: dict
 
@@ -35,3 +48,10 @@ class ToolFinishEvent(Event):
     tool_id: str
     tool_name: str
     tool_output: dict
+
+
+@dataclass
+class DoneEvent(Event):
+    """Terminal event for an input_id. error field is non-None on failure."""
+
+    pass

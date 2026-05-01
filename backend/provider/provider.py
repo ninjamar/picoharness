@@ -7,7 +7,7 @@ import ollama
 from openai import AsyncOpenAI
 
 from backend.tools import BaseTool
-from backend import events
+
 
 @dataclass
 class _ToolCallFunction:

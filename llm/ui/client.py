@@ -11,8 +11,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import ANSI
 
 from ..core.backend import ChatBackend
-from ..events import (Event, ResponseEvent, ThinkingEvent, ToolEndEvent,
-                      ToolStartEvent, UserInputEvent)
+from ..events import Event, ResponseEvent, ThinkingEvent, ToolEndEvent, ToolStartEvent, UserInputEvent
 
 _ISO2022_RE = re.compile(r"\x1b[()][0-9A-Za-z]")
 
@@ -43,7 +42,7 @@ def _print_event(term: blessed.Terminal, event: Event, show_thinking: bool, last
                 if len(a := list(zip(inp.keys(), inp.values()))) == 1:
                     fmt = a[0][1]
                 else:
-                    fmt = ",".join([f'{k}={v!r}' for k, v in a])
+                    fmt = ",".join([f"{k}={v!r}" for k, v in a])
             else:
                 fmt = str(inp)
             """
@@ -51,11 +50,11 @@ def _print_event(term: blessed.Terminal, event: Event, show_thinking: bool, last
                 baz bar qaz
             """
 
-            print(term.bold_blue(f"\n{name}(\"{fmt})\""), flush=True)
+            print(term.bold_blue(f'\n{name}("{fmt})"'), flush=True)
         case ToolEndEvent(id=tool_id, output=output):
             output_str = str(output)
-            pad = '\t'
-            
+            pad = "\t"
+
             wrapped_lines = term.wrap(output_str, width=term.width - term.length(pad))
 
             for line in wrapped_lines:
