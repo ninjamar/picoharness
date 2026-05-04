@@ -26,13 +26,24 @@ def _fmt_tool_input(inp: dict | str) -> str:
     return ", ".join(f"{k}={v!r}" for k, v in items)
 
 
-def _build_live(thinking_buf: list[str], response_buf: list[str]):
-    """Combine thinking and response buffers into a single renderable."""
+def _build_live(segments: list[tuple[str, list[str]]]):
+    """Build live display from interleaved thinking/response/tool segments."""
     parts = []
-    if thinking_buf:
-        parts.append(Text("".join(thinking_buf), style="dim italic"))
-    if response_buf:
-        parts.append(Markdown("".join(response_buf)))
+    for kind, chunks in segments:
+        match kind:
+            case "thinking":
+                text = "".join(chunks)
+                parts.append(Text(text, style="dim italic"))
+            case "response":
+                text = "".join(chunks)
+                parts.append(Markdown(text))
+            case "tool_start":
+                parts.append(Text(f"\n{chunks[0]}", style="bold blue"))
+            case "tool_output":
+                text = "\n".join(chunks)
+                parts.append(Text(text, style="dim cyan"))
+            case "tool_error":
+                parts.append(Text(chunks[0], style="red"))
     return Group(*parts) if parts else Group()
 
 
@@ -68,8 +79,7 @@ class ChatFrontend:
         return await self._prompt.prompt_async("> ")
 
     async def _collect_turn(self, input_id: str, events_gen: AsyncGenerator) -> None:
-        response_buf = []
-        thinking_buf = []
+        segments: list[tuple[str, list[str]]] = []
         with Live(console=self._console, auto_refresh=False) as live:
             async for event in events_gen:
                 if event.id != input_id:
@@ -77,7 +87,7 @@ class ChatFrontend:
                     # What should happen: events are always caught, then they are put in a queue.
                     # Then this function would operate on that queue
                     continue
-                self._render_event(live, response_buf, thinking_buf, event)
+                self._render_event(live, segments, event)
                 if isinstance(event, DoneEvent) and event.id == input_id:
                     # This should NOT be in _render_event as _collecting turn stops here.
                     # Only rendered in case of error
@@ -85,39 +95,49 @@ class ChatFrontend:
                         self._console.print(f"\n[red]Error: {event.error}[/red]")
                     break
 
-    def _render_event(self, live: Live, response_buf: list, thinking_buf: list, event: Event) -> None:
+    def _render_event(self, live: Live, segments: list[tuple[str, list[str]]], event: Event) -> None:
         match event:
             case UserInputEvent():
                 pass
-            case ThinkingEvent(text=text):
-                thinking_buf.append(text)
-                live.update(_build_live(thinking_buf, response_buf))
+            case ThinkingEvent(text=text) if text:
+                if segments and segments[-1][0] == "thinking":
+                    segments[-1][1].append(text)
+                else:
+                    segments.append(("thinking", [text]))
+                live.update(_build_live(segments))
                 live.refresh()
-            case ResponseEvent(text=text):
-                response_buf.append(text)
-                live.update(_build_live(thinking_buf, response_buf))
+            case ResponseEvent(text=text) if text:
+                if segments and segments[-1][0] == "response":
+                    segments[-1][1].append(text)
+                else:
+                    segments.append(("response", [text]))
+                live.update(_build_live(segments))
                 live.refresh()
             case ToolStartEvent(tool_name=name, tool_input=inp):
                 fmt = _fmt_tool_input(inp)
-                self._console.print(f"\n⏺ {name}({fmt})", style="bold blue")
+                segments.append(("tool_start", [f"⏺ {name}({fmt})"]))
+                live.update(_build_live(segments))
+                live.refresh()
             case ToolFinishEvent(tool_name=name, tool_output=out, error=err):
                 if err:
-                    self._console.print(f"  Error: {err}", style="red", markup=False)
+                    segments.append(("tool_error", [f"  Error: {err}"]))
                 else:
                     result = out.get("result", "") if out else ""
                     if output_format := out.get("output_format"):
                         match output_format:
                             case "all":
-                                self._console.print(result, style="dim cyan", markup=False)
+                                segments.append(("tool_output", [result]))
                             case "truncate":
                                 if len(result) > MAX_TOOL_OUTPUT:
                                     result = result[:MAX_TOOL_OUTPUT] + "… [truncated]"
-                                for line in result.splitlines():
-                                    self._console.print(f"  {line}", style="dim cyan", markup=False)
+                                lines = [f"  {line}" for line in result.splitlines()]
+                                segments.append(("tool_output", lines))
                             case "none":
                                 pass
                             case _:
                                 raise RuntimeError("Encountered invalid output format (shouldn't happen)")
+                live.update(_build_live(segments))
+                live.refresh()
 
             case DoneEvent():
                 pass
