@@ -105,10 +105,20 @@ class ChatFrontend:
                     self._console.print(f"  Error: {err}", style="red", markup=False)
                 else:
                     result = out.get("result", "") if out else ""
-                    if len(result) > MAX_TOOL_OUTPUT:
-                        result = result[:MAX_TOOL_OUTPUT] + "… [truncated]"
-                    for line in result.splitlines():
-                        self._console.print(f"  {line}", style="dim cyan", markup=False)
+                    if output_format := out.get("output_format"):
+                        match output_format:
+                            case "all":
+                                self._console.print(result, style="dim cyan", markup=False)
+                            case "truncate":
+                                if len(result) > MAX_TOOL_OUTPUT:
+                                    result = result[:MAX_TOOL_OUTPUT] + "… [truncated]"
+                                for line in result.splitlines():
+                                    self._console.print(f"  {line}", style="dim cyan", markup=False)
+                            case "none":
+                                pass
+                            case _:
+                                raise RuntimeError("Encountered invalid output format (shouldn't happen)")
+
             case DoneEvent():
                 pass
 

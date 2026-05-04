@@ -4,7 +4,7 @@ import inspect
 import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 
 def _parse_docstring(doc_string: str | None) -> dict[str, str]:
@@ -88,6 +88,7 @@ def convert_function_to_tool(func: Callable) -> dict[str, Any]:
 
 class BaseTool(ABC):
     name: str = ""
+    output_format: Literal["all", "truncate", "none"]
 
     def __init__(self) -> None:
         pass

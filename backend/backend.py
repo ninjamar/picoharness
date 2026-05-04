@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from collections import namedtuple
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -11,6 +12,9 @@ from backend.tools import BaseTool, ReadFileTool
 ALLOWED_TOOLS: list[type[BaseTool]] = [ReadFileTool]
 
 _SENTINEL = object()
+
+
+_tool_execution_result = namedtuple("ToolExecutionResult", ["result", "error", "output_format"])
 
 
 class Backend:
@@ -110,12 +114,12 @@ class Backend:
             if not tool_calls:
                 break
 
-            async def run_tool(tc: dict) -> tuple[str, str, str | None, str | None]:
+            async def run_tool(tc: dict) -> tuple[str, str, str | None, str | None, str | None]:
                 tool_id = tc["id"]
                 name = tc["function"]["name"]
                 args = tc["function"]["arguments"]
-                output, error = await self._execute_tool(name, args)
-                return tool_id, name, output, error
+                output, error, output_format = await self._execute_tool(name, args)
+                return tool_id, name, output, error, output_format
 
             tasks = [asyncio.create_task(run_tool(tc)) for tc in tool_calls]
 
@@ -133,7 +137,7 @@ class Backend:
 
             results: dict[str, str] = {}
             for coro in asyncio.as_completed(tasks):
-                tool_id, name, output, error = await coro
+                tool_id, name, output, error, output_format = await coro
                 if error:
                     results[tool_id] = ""
                 else:
@@ -145,7 +149,7 @@ class Backend:
                         error=error,
                         tool_id=tool_id,
                         tool_name=name,
-                        tool_output={"result": output} if output else {},
+                        tool_output={"result": output, "output_format": output_format} if output else {},
                     )
                 )
 
@@ -160,13 +164,13 @@ class Backend:
 
         await self._event_queue.put(DoneEvent(id=input_id, text=None, error=None))
 
-    async def _execute_tool(self, name: str, args: dict) -> tuple[str | None, str | None]:
+    async def _execute_tool(self, name: str, args: dict):
         """Returns (output, error). One will be None, the other will have a value."""
         for instance in self._tool_instances:
             if instance.name == name:
                 try:
                     result = await instance.execute(**args)
-                    return result, None
+                    return _tool_execution_result(result=result, error=None, output_format=instance.output_format)
                 except Exception as exc:
-                    return None, str(exc)
-        return None, f"Unknown tool: {name}"
+                    return _tool_execution_result(result=None, error=str(exc), output_format=None)
+        return _tool_execution_result(result=None, error=f"Unknown tool: {name}", output_format=None)
