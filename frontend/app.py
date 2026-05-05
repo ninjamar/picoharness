@@ -4,6 +4,7 @@ import signal
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from rich.console import Console, Group
@@ -161,6 +162,11 @@ def cli() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--provider", required=True, help="'ollama' or 'host:port' for OpenAI-compatible")
     parser.add_argument("--think", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--system-prompt-path",
+        default=None,
+        help="Path to a markdown file used as the system prompt",
+    )
     args = parser.parse_args()
 
     tools = ALLOWED_TOOLS
@@ -170,5 +176,12 @@ def cli() -> None:
     else:
         provider = OpenAICompatibleProvider(base_url=f"http://{args.provider}/v1", tools=tools)
 
-    backend = Backend(provider=provider, model=args.model, think=args.think, tools=tools)
+    system_prompt = None
+    prompt_path = (
+        Path(args.system_prompt_path) if args.system_prompt_path else Path(__file__).parent / "system_prompt.md"
+    )
+    if prompt_path.exists():
+        system_prompt = prompt_path.read_text()
+
+    backend = Backend(provider=provider, model=args.model, think=args.think, tools=tools, system_prompt=system_prompt)
     ChatFrontend(backend=backend).run()

@@ -26,14 +26,16 @@ class Backend:
         model: str,
         think: bool = False,
         tools: list[type[BaseTool]] | None = None,
-        system_prompt: dict | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         self._provider = provider
         self._model = model
         self._think = think
         self._tool_classes: list[type[BaseTool]] = tools or []
         self._tool_instances: list[BaseTool] = []
-        self._messages: list[dict[str, Any]] = [] if system_prompt is None else [system_prompt]
+        self._messages: list[dict[str, Any]] = (
+            [] if system_prompt is None else [{"role": "system", "content": system_prompt}]
+        )
         self._input_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
         self._event_queue: asyncio.Queue[Event | object] = asyncio.Queue()
         self._process_task: asyncio.Task | None = None
