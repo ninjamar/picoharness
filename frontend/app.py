@@ -12,9 +12,17 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
-from backend import (Backend, DoneEvent, Event, ResponseEvent, ThinkingEvent,
-                     ToolErrorEvent, ToolOutputEvent, ToolStartEvent,
-                     UserInputEvent)
+from backend import (
+    Backend,
+    DoneEvent,
+    Event,
+    ResponseEvent,
+    ThinkingEvent,
+    ToolErrorEvent,
+    ToolOutputEvent,
+    ToolStartEvent,
+    UserInputEvent,
+)
 from backend.backend import ALLOWED_TOOLS
 from backend.provider.provider import OllamaProvider, OpenAICompatibleProvider
 
@@ -172,9 +180,9 @@ def cli() -> None:
     tools = ALLOWED_TOOLS
 
     if args.provider == "ollama":
-        provider = OllamaProvider(tools=tools)
+        provider = OllamaProvider()
     else:
-        provider = OpenAICompatibleProvider(base_url=f"http://{args.provider}/v1", tools=tools)
+        provider = OpenAICompatibleProvider(base_url=f"http://{args.provider}/v1")
 
     system_prompt = None
     prompt_path = (
@@ -182,6 +190,5 @@ def cli() -> None:
     )
     if prompt_path.exists():
         system_prompt = prompt_path.read_text()
-
     backend = Backend(provider=provider, model=args.model, think=args.think, tools=tools, system_prompt=system_prompt)
     ChatFrontend(backend=backend).run()

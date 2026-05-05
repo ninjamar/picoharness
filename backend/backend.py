@@ -1,12 +1,20 @@
 import asyncio
+import inspect
 import uuid
 from collections import namedtuple
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from backend.events import (DoneEvent, Event, ResponseEvent, ThinkingEvent,
-                            ToolErrorEvent, ToolOutputEvent, ToolStartEvent,
-                            UserInputEvent)
+from backend.events import (
+    DoneEvent,
+    Event,
+    ResponseEvent,
+    ThinkingEvent,
+    ToolErrorEvent,
+    ToolOutputEvent,
+    ToolStartEvent,
+    UserInputEvent,
+)
 from backend.provider.provider import BaseProvider
 from backend.tools import BaseTool, ReadFileTool
 
@@ -16,6 +24,29 @@ _SENTINEL = object()
 
 
 _tool_execution_result = namedtuple("ToolExecutionResult", ["result", "error", "output_format"])
+
+
+def _get_tool_info(tool_classes: list[type[BaseTool]]) -> str:
+    info = []
+    for tool in tool_classes:
+        sig = inspect.signature(tool.execute)
+
+        params = dict(sig.parameters)
+        params.pop("self", None)
+        clean_sig = sig.replace(parameters=list(params.values()))
+
+        docstring = inspect.getdoc(tool.execute) or ""
+        name = tool.name
+
+        indented_doc = "\n".join(f"    {line}" for line in docstring.splitlines())
+        info.append(f"- {name}{clean_sig}\n{indented_doc}")
+        # info.append(f"{name}{clean_sig}\n{docstring}")
+
+    return "\n".join(info)
+
+
+def _format_system_prompt(prompt: str, tool_classes: list[type[BaseTool]]) -> str:
+    return prompt.replace("{{tools}}", _get_tool_info(tool_classes))
 
 
 class Backend:
@@ -29,13 +60,21 @@ class Backend:
         system_prompt: str | None = None,
     ) -> None:
         self._provider = provider
+
         self._model = model
         self._think = think
         self._tool_classes: list[type[BaseTool]] = tools or []
+        self._tool_schemas = [tool.to_schema() for tool in self._tool_classes]
+        self._provider.tool_schemas = self._tool_schemas
+
         self._tool_instances: list[BaseTool] = []
+
         self._messages: list[dict[str, Any]] = (
-            [] if system_prompt is None else [{"role": "system", "content": system_prompt}]
+            []
+            if system_prompt is None
+            else [{"role": "system", "content": _format_system_prompt(system_prompt, self._tool_classes)}]
         )
+        # print(_format_system_prompt(system_prompt, self._tool_classes))
         self._input_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
         self._event_queue: asyncio.Queue[Event | object] = asyncio.Queue()
         self._process_task: asyncio.Task | None = None
