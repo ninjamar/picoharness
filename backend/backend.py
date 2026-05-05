@@ -5,7 +5,8 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from backend.events import (DoneEvent, Event, ResponseEvent, ThinkingEvent,
-                            ToolFinishEvent, ToolStartEvent, UserInputEvent)
+                            ToolErrorEvent, ToolOutputEvent, ToolStartEvent,
+                            UserInputEvent)
 from backend.provider.provider import BaseProvider
 from backend.tools import BaseTool, ReadFileTool
 
@@ -72,11 +73,11 @@ class Backend:
             try:
                 await self._run_turn(input_id, text)
             except Exception as exc:
-                await self._event_queue.put(DoneEvent(id=input_id, text=None, error=str(exc)))
+                await self._event_queue.put(DoneEvent(id=input_id, error=str(exc)))
 
     async def _run_turn(self, input_id: str, text: str) -> None:
         self._messages.append({"role": "user", "content": text})
-        await self._event_queue.put(UserInputEvent(id=input_id, text=text, error=None))
+        await self._event_queue.put(UserInputEvent(id=input_id, text=text))
 
         while True:
             response_text = ""
@@ -88,11 +89,11 @@ class Backend:
                 think=self._think,
             ):
                 if fragment := part.message.thinking:
-                    await self._event_queue.put(ThinkingEvent(id=input_id, text=fragment, error=None))
+                    await self._event_queue.put(ThinkingEvent(id=input_id, fragment=fragment))
 
                 if fragment := part.message.content:
                     response_text += fragment
-                    await self._event_queue.put(ResponseEvent(id=input_id, text=fragment, error=None))
+                    await self._event_queue.put(ResponseEvent(id=input_id, fragment=fragment))
 
                 for tc in part.message.tool_calls:
                     tool_calls.append(
@@ -127,8 +128,6 @@ class Backend:
                 await self._event_queue.put(
                     ToolStartEvent(
                         id=input_id,
-                        text=None,
-                        error=None,
                         tool_id=tc["id"],
                         tool_name=tc["function"]["name"],
                         tool_input=tc["function"]["arguments"],
@@ -140,18 +139,20 @@ class Backend:
                 tool_id, name, output, error, output_format = await coro
                 if error:
                     results[tool_id] = ""
+                    await self._event_queue.put(
+                        ToolErrorEvent(id=input_id, tool_id=tool_id, tool_name=name, error=error)
+                    )
                 else:
                     results[tool_id] = output or ""
-                await self._event_queue.put(
-                    ToolFinishEvent(
-                        id=input_id,
-                        text=None,
-                        error=error,
-                        tool_id=tool_id,
-                        tool_name=name,
-                        tool_output={"result": output, "output_format": output_format} if output else {},
+                    await self._event_queue.put(
+                        ToolOutputEvent(
+                            id=input_id,
+                            tool_id=tool_id,
+                            tool_name=name,
+                            result=output or "",
+                            output_format=output_format,  # type: ignore[arg-type]
+                        )
                     )
-                )
 
             for tc in tool_calls:
                 self._messages.append(
@@ -162,7 +163,7 @@ class Backend:
                     }
                 )
 
-        await self._event_queue.put(DoneEvent(id=input_id, text=None, error=None))
+        await self._event_queue.put(DoneEvent(id=input_id, error=None))
 
     async def _execute_tool(self, name: str, args: dict):
         """Returns (output, error). One will be None, the other will have a value."""

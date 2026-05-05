@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import Literal
 
 __all__ = [
     "Event",
@@ -6,52 +9,54 @@ __all__ = [
     "ThinkingEvent",
     "ResponseEvent",
     "ToolStartEvent",
-    "ToolFinishEvent",
+    "ToolOutputEvent",
+    "ToolErrorEvent",
     "DoneEvent",
 ]
 
 
 @dataclass
 class Event:
-    id: str  # ID of sequence
-    text: str | None  # Text
-    error: str | None  # Error message
+    id: str
 
 
 @dataclass
 class UserInputEvent(Event):
-    # Pass your id and message (through text)
-    pass
+    text: str
 
 
 @dataclass
 class ThinkingEvent(Event):
-    # Model thinks in text
-    pass
+    fragment: str
 
 
 @dataclass
 class ResponseEvent(Event):
-    # Response in section text
-    pass
+    fragment: str
 
 
 @dataclass
 class ToolStartEvent(Event):
-    tool_id: str  # To match with tool finish event
+    tool_id: str
     tool_name: str
     tool_input: dict
 
 
 @dataclass
-class ToolFinishEvent(Event):
+class ToolOutputEvent(Event):
     tool_id: str
     tool_name: str
-    tool_output: dict
+    result: str
+    output_format: Literal["all", "truncate", "none"]
+
+
+@dataclass
+class ToolErrorEvent(Event):
+    tool_id: str
+    tool_name: str
+    error: str
 
 
 @dataclass
 class DoneEvent(Event):
-    """Terminal event for an input_id. error field is non-None on failure."""
-
-    pass
+    error: str | None
