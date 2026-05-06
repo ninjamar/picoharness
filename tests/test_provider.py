@@ -58,7 +58,7 @@ def make_ollama_provider(chunks):
                 yield chunk
 
         mock_client.chat = AsyncMock(side_effect=lambda **kwargs: async_gen(**kwargs))
-        yield OllamaProvider(tools=[])
+        yield OllamaProvider()
 
 
 @contextmanager
@@ -73,7 +73,7 @@ def make_openai_provider(chunks):
                 yield chunk
 
         mock_client.chat.completions.create = AsyncMock(side_effect=lambda **kwargs: async_gen(**kwargs))
-        yield OpenAICompatibleProvider(base_url="http://localhost:8000", tools=[])
+        yield OpenAICompatibleProvider(base_url="http://localhost:8000")
 
 
 async def test_ollama_streams_content():

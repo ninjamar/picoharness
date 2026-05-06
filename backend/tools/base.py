@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import inspect
 import re
-from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 
 def _parse_docstring(doc_string: str | None) -> dict[str, str]:
@@ -41,52 +40,7 @@ def _parse_docstring(doc_string: str | None) -> dict[str, str]:
     return parsed_docstring
 
 
-def convert_function_to_tool(func: Callable) -> dict[str, Any]:
-    # Taken from https://github.com/ollama/ollama-python/blob/main/ollama/_utils.py
-    # LICENSE: MIT
-    doc = inspect.getdoc(func)
-    parsed = _parse_docstring(doc)
-    doc_key = str(hash(doc))
-
-    sig = inspect.signature(func)
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-
-    for name, param in sig.parameters.items():
-        type_map = {
-            str: "string",
-            int: "integer",
-            float: "number",
-            bool: "boolean",
-            list: "array",
-            dict: "object",
-        }
-        json_type = type_map.get(param.annotation, "string")
-        if param.annotation is inspect.Parameter.empty:
-            json_type = "string"
-
-        properties[name] = {
-            "type": json_type,
-            "description": parsed.get(name, ""),
-        }
-        if param.default is inspect.Parameter.empty:
-            required.append(name)
-
-    return {
-        "type": "function",
-        "function": {
-            "name": func.__name__,
-            "description": parsed.get(doc_key, "").strip(),
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-            },
-        },
-    }
-
-
-class BaseTool(ABC):
+class BaseTool:
     name: str = ""
     output_format: Literal["all", "truncate", "none"]
 
@@ -95,14 +49,51 @@ class BaseTool(ABC):
 
     @classmethod
     def to_schema(cls) -> dict[str, Any]:
-        tool = convert_function_to_tool(cls.execute)
-        params = tool["function"]["parameters"]
-        del params["properties"]["self"]
-        params["required"].remove("self")
-        tool["function"]["name"] = cls.name
-        return tool
 
-    @abstractmethod
+        # Adapted from https://github.com/ollama/ollama-python/blob/main/ollama/_utils.py
+
+        doc = inspect.getdoc(cls.execute)  # find for method cls.execute
+        parsed = _parse_docstring(doc)
+        doc_key = str(hash(doc))
+
+        sig = inspect.signature(cls.execute)
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+
+        for name, param in sig.parameters.items():
+            type_map = {
+                str: "string",
+                int: "integer",
+                float: "number",
+                bool: "boolean",
+                list: "array",
+                dict: "object",
+            }
+            json_type = type_map.get(param.annotation, "string")
+            if param.annotation is inspect.Parameter.empty:
+                json_type = "string"
+
+            if name != "self":
+                properties[name] = {
+                    "type": json_type,
+                    "description": parsed.get(name, ""),
+                }
+                if param.default is inspect.Parameter.empty:
+                    required.append(name)
+
+        return {
+            "type": "function",
+            "function": {
+                "name": cls.name,
+                "description": parsed.get(doc_key, "").strip(),
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
+            },
+        }
+
     async def execute(self, **kwargs) -> str:
         """
         IMPORTANT: Do not add any other parameters exept for what is needed as tool calls are constructed from the annotation

@@ -1,12 +1,9 @@
 import json
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 import ollama
 from openai import AsyncOpenAI
-
-from backend.tools import BaseTool
 
 
 @dataclass
@@ -32,15 +29,12 @@ class _ChatResponse:
     message: _ChatMessage
 
 
-class BaseProvider(ABC):
+class BaseProvider:
     tool_schemas: list[dict[str, Any]]
 
-    def __init__(
-        self,
-    ) -> None:
-        pass
+    def __init__(self) -> None:
+        self.tool_schemas = []
 
-    @abstractmethod
     async def chat(
         self, model: str, messages: list[dict[str, Any]], think: bool
     ) -> AsyncGenerator[_ChatResponse, None]:
@@ -61,6 +55,7 @@ class BaseProvider(ABC):
 
 class OllamaProvider(BaseProvider):
     def __init__(self) -> None:
+        super().__init__()
         self.client = ollama.AsyncClient()
 
     async def chat(
@@ -91,13 +86,12 @@ class OllamaProvider(BaseProvider):
 
 class OpenAICompatibleProvider(BaseProvider):
     def __init__(self, base_url: str, api_key: str = "") -> None:
+        super().__init__()
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
     async def chat(
         self, model: str, messages: list[dict[str, Any]], think: bool
     ) -> AsyncGenerator[_ChatResponse, None]:
-
-        assert self.tool_schemas is not None
 
         serialized_messages = []
         for message in messages:

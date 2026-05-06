@@ -6,10 +6,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend import Backend
-from backend.events import (DoneEvent, ResponseEvent, ThinkingEvent,
-                            ToolFinishEvent, ToolStartEvent, UserInputEvent)
-from backend.provider.provider import (_ChatMessage, _ChatResponse, _ToolCall,
-                                       _ToolCallFunction)
+from backend.events import (
+    DoneEvent,
+    ResponseEvent,
+    ThinkingEvent,
+    ToolErrorEvent,
+    ToolOutputEvent,
+    ToolStartEvent,
+    UserInputEvent,
+)
+from backend.provider.provider import (
+    _ChatMessage,
+    _ChatResponse,
+    _ToolCall,
+    _ToolCallFunction,
+)
 from backend.tools import ReadFileTool
 
 
@@ -75,7 +86,7 @@ async def test_basic_response():
 
         # Verify events
         assert any(isinstance(e, UserInputEvent) for e in events), "Missing UserInputEvent"
-        assert any(isinstance(e, ResponseEvent) and e.text == "Hello!" for e in events), (
+        assert any(isinstance(e, ResponseEvent) and e.fragment == "Hello!" for e in events), (
             "Missing ResponseEvent with correct text"
         )
         assert any(isinstance(e, DoneEvent) and e.id == "req-1" and e.error is None for e in events), (
@@ -132,11 +143,9 @@ async def test_tool_call_flow():
                 "Missing ToolStartEvent"
             )
             assert any(
-                isinstance(e, ToolFinishEvent)
-                and e.tool_name == "read_file"
-                and e.tool_output == {"result": "file contents"}
+                isinstance(e, ToolOutputEvent) and e.tool_name == "read_file" and e.result == "file contents"
                 for e in events
-            ), "Missing ToolFinishEvent with correct output"
+            ), "Missing ToolOutputEvent with correct output"
             assert any(isinstance(e, DoneEvent) and e.error is None for e in events)
 
 
@@ -233,13 +242,15 @@ async def test_multiple_tool_calls_concurrent():
 
             # Count tool start and finish events
             tool_starts = [e for e in events if isinstance(e, ToolStartEvent)]
-            tool_finishes = [e for e in events if isinstance(e, ToolFinishEvent)]
+            tool_finishes = [e for e in events if isinstance(e, (ToolOutputEvent, ToolErrorEvent))]
 
             assert len(tool_starts) == 2
             assert len(tool_finishes) == 2
 
             # All starts should come before any finish (since they're emitted up front)
-            first_finish_idx = next((i for i, e in enumerate(events) if isinstance(e, ToolFinishEvent)), -1)
+            first_finish_idx = next(
+                (i for i, e in enumerate(events) if isinstance(e, (ToolOutputEvent, ToolErrorEvent))), -1
+            )
             assert all(events.index(e) < first_finish_idx for e in tool_starts), (
                 "All ToolStartEvents should come before ToolFinishEvents"
             )
@@ -265,12 +276,11 @@ async def test_tool_error_in_finish_event():
             backend.feed("req-1", "read missing file")
             events = await collect_events(backend, "req-1")
 
-            # Verify error in ToolFinishEvent
-            tool_finishes = [e for e in events if isinstance(e, ToolFinishEvent)]
-            assert len(tool_finishes) == 1
-            assert tool_finishes[0].error is not None
-            assert "File not found" in tool_finishes[0].error
-            assert tool_finishes[0].tool_output == {}
+            # Verify error in ToolErrorEvent
+            tool_errors = [e for e in events if isinstance(e, ToolErrorEvent)]
+            assert len(tool_errors) == 1
+            assert tool_errors[0].error is not None
+            assert "File not found" in tool_errors[0].error
             # DoneEvent should succeed despite tool error
             assert any(isinstance(e, DoneEvent) and e.error is None for e in events)
 

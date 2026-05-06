@@ -25,8 +25,11 @@ from backend import (
 )
 from backend.backend import ALLOWED_TOOLS
 from backend.provider.provider import OllamaProvider, OpenAICompatibleProvider
+from frontend import kitty
 
 MAX_TOOL_OUTPUT = 500
+
+SYSTEM_PROMPT_PATH = Path(__file__).parent / "files" / "system_prompt.md"
 
 
 @dataclass
@@ -75,6 +78,10 @@ def _build_live(segments):
                         pass
             case ToolErrorEvent(error=err):
                 parts.append(Text(f"  Error: {err}", style="red"))
+            case DoneEvent(error=error):
+                if error:
+                    parts.append(Text(f"Error: {error}", style="red"))
+
     return Group(*parts) if parts else Group()
 
 
@@ -84,43 +91,59 @@ class ChatFrontend:
         self._console = Console(highlight=False, markup=True)
         self._prompt = PromptSession()
         self._live: Live | None = None
+        self._use_kitty = kitty.detect_kitty()
+        self._bindings = kitty.make_input_bindings()
+        if self._use_kitty:
+            kitty.init_kitty()
 
     def run(self) -> None:
         """Sync entry point — creates event loop and runs the chat."""
         asyncio.run(self._run_async())
 
     async def _run_async(self) -> None:
-        async with self._backend:
-            self._print_header()
-            events_gen = self._backend.stream_events()
+        try:
+            async with self._backend:
+                self._print_header()
+                events_gen = self._backend.stream_events()
 
-            while True:
-                try:
-                    user_text = await self._read_input()
-                except KeyboardInterrupt, EOFError:
-                    self._console.print("\n[dim]Bye.[/dim]")
-                    break
-                if not user_text.strip():
-                    continue
+                while True:
+                    try:
+                        user_text = await self._read_input()
+                    except KeyboardInterrupt, EOFError:
+                        self._console.print("\n[dim]Bye.[/dim]")
+                        break
+                    if not user_text.strip():
+                        continue
 
-                input_id = str(uuid.uuid4())
+                    input_id = str(uuid.uuid4())
 
-                self._backend.feed(input_id, user_text)
+                    self._backend.feed(input_id, user_text)
 
-                loop = asyncio.get_event_loop()
-                task = asyncio.ensure_future(self._collect_turn(input_id, events_gen))
-                loop.add_signal_handler(signal.SIGINT, task.cancel)
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    self._console.print("\n[dim]Interrupted.[/dim]")
-                finally:
-                    loop.remove_signal_handler(signal.SIGINT)
+                    if self._use_kitty:
+                        kitty.end_kitty()
+                    loop = asyncio.get_event_loop()
+                    task = asyncio.ensure_future(self._collect_turn(input_id, events_gen))
+                    loop.add_signal_handler(signal.SIGINT, task.cancel)
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        self._console.print("\n[dim]Interrupted.[/dim]")
+                    finally:
+                        loop.remove_signal_handler(signal.SIGINT)
+                        if self._use_kitty:
+                            kitty.init_kitty()
 
-                self._console.print()
+                    self._console.print()
+        finally:
+            if self._use_kitty:
+                kitty.end_kitty()
 
     async def _read_input(self) -> str:
-        return await self._prompt.prompt_async("> ")
+        return await self._prompt.prompt_async(
+            "> ",
+            multiline=True,
+            key_bindings=self._bindings,
+        )
 
     async def _collect_turn(self, input_id: str, events_gen: AsyncGenerator) -> None:
         segments: list[_Segment] = []
@@ -132,17 +155,20 @@ class ChatFrontend:
                     # Then this function would operate on that queue
                     continue
                 self._render_event(live, segments, event)
-                if isinstance(event, DoneEvent) and event.id == input_id:
+                if isinstance(event, DoneEvent):
                     # This should NOT be in _render_event as _collecting turn stops here.
                     # Only rendered in case of error
-                    if event.error:
-                        self._console.print(f"\n[red]Error: {event.error}[/red]")
+                    # if event.error:
+                    #    self._console.print(f"\n[red]Error: {event.error}[/red]")
                     break
 
     def _render_event(self, live: Live, segments, event: Event) -> None:
         match event:
-            case UserInputEvent() | DoneEvent():
+            case UserInputEvent():
                 return
+            case DoneEvent():
+                # There could be an error, so display it
+                segments.append(event)
             case ThinkingEvent(fragment=f):
                 # Merge segments
                 if segments and isinstance(segments[-1], _ThinkingSegment):
@@ -162,7 +188,8 @@ class ChatFrontend:
 
     def _print_header(self) -> None:
         self._console.rule("[bold]LocalAI Chat[/bold]")
-        self._console.print("[dim]Ctrl+C or Ctrl+D to quit[/dim]\n")
+        newline_hint = "Shift+Enter" if self._use_kitty else "Ctrl+J"
+        self._console.print(f"[dim]Ctrl+C or Ctrl+D to quit • {newline_hint} for newline[/dim]\n")
 
 
 def cli() -> None:
@@ -185,9 +212,7 @@ def cli() -> None:
         provider = OpenAICompatibleProvider(base_url=f"http://{args.provider}/v1")
 
     system_prompt = None
-    prompt_path = (
-        Path(args.system_prompt_path) if args.system_prompt_path else Path(__file__).parent / "system_prompt.md"
-    )
+    prompt_path = Path(args.system_prompt_path) if args.system_prompt_path else SYSTEM_PROMPT_PATH
     if prompt_path.exists():
         system_prompt = prompt_path.read_text()
     backend = Backend(provider=provider, model=args.model, think=args.think, tools=tools, system_prompt=system_prompt)
