@@ -83,7 +83,7 @@ def make_input_bindings() -> KeyBindings:
 
 def init_kitty() -> None:
     """Initialize kitty keyboard protocol: register sequences and enable protocol."""
-    register_sequences()
+    register_sequences()  # TODO: Is there a cost to this operation?
     sys.stdout.write("\x1b[>1u")
     sys.stdout.flush()
 

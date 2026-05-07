@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
+from xmlrpc.client import boolean
 
 __all__ = [
     "Event",
@@ -60,3 +61,4 @@ class ToolErrorEvent(Event):
 @dataclass
 class DoneEvent(Event):
     error: str | None
+    interrupted: bool  # if user interrupted or not

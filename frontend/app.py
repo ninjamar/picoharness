@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -90,11 +91,27 @@ class ChatFrontend:
         self._backend = backend
         self._console = Console(highlight=False, markup=True)
         self._prompt = PromptSession()
+
         self._live: Live | None = None
+
         self._use_kitty = kitty.detect_kitty()
-        self._bindings = kitty.make_input_bindings()
+        self._bindings = self._setup_bindings()
+
         if self._use_kitty:
-            kitty.init_kitty()
+            kitty.init_kitty()  # TODO: should the use guard be included in init_kitty?
+
+    def _setup_bindings(self) -> KeyBindings:
+        bindings = kitty.make_input_bindings()
+
+        @bindings.add("c-c")
+        def _(event):
+            # If there's text in the buffer, clear it; otherwise exit
+            if event.app.current_buffer.text:
+                event.app.current_buffer.text = ""
+            else:
+                event.app.exit(exception=KeyboardInterrupt())
+
+        return bindings
 
     def run(self) -> None:
         """Sync entry point — creates event loop and runs the chat."""
@@ -109,7 +126,7 @@ class ChatFrontend:
                 while True:
                     try:
                         user_text = await self._read_input()
-                    except KeyboardInterrupt, EOFError:
+                    except KeyboardInterrupt, EOFError:  # This is valid Python 3.14 synax: see PEP PEP 758
                         self._console.print("\n[dim]Bye.[/dim]")
                         break
                     if not user_text.strip():
@@ -127,7 +144,11 @@ class ChatFrontend:
                     try:
                         await task
                     except asyncio.CancelledError:
+                        # Pressing ctrl-c causes the cancellation which then gets sent to the backend.
+                        # For consistency, the backend still sends DoneEvent with interrupt = true
+                        self._backend.cancel_current()
                         self._console.print("\n[dim]Interrupted.[/dim]")
+                        events_gen = self._backend.stream_events()
                     finally:
                         loop.remove_signal_handler(signal.SIGINT)
                         if self._use_kitty:
