@@ -9,6 +9,7 @@ dependencies = [
     "openai>=2.32.0",
     "prompt-toolkit>=3.0.52",
     "rich>=13.0",
+    "tabulate>=0.10.0",
 ]
 [dependency-groups]
 dev = [

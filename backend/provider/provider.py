@@ -29,6 +29,13 @@ class _ChatResponse:
     message: _ChatMessage
 
 
+@dataclass
+class ModelInfo:
+    name: str
+    parameter_size: str | None = None
+    quantization_level: str | None = None
+
+
 class BaseProvider:
     tool_schemas: list[dict[str, Any]]
 
@@ -40,6 +47,9 @@ class BaseProvider:
     ) -> AsyncGenerator[_ChatResponse, None]:
         raise NotImplementedError
         yield  # Need to satisfy AsyncGenerator type annotation
+
+    async def list_models(self) -> list[ModelInfo]:
+        raise NotImplementedError
 
     # async def stream_events(self, *, id, model: str, messages: list[dict[str, Any]], think: bool) -> AsyncGenerator[Event, None]:
     #     async for part in self._chat(model, messages, think):
@@ -82,6 +92,17 @@ class OllamaProvider(BaseProvider):
                     tool_calls=tool_calls,
                 )
             )
+
+    async def list_models(self) -> list[ModelInfo]:
+        response = await self.client.list()
+        return [
+            ModelInfo(
+                name=m.model or "",
+                parameter_size=m.details.parameter_size if m.details else None,
+                quantization_level=m.details.quantization_level if m.details else None,
+            )
+            for m in response.models
+        ]
 
 
 class OpenAICompatibleProvider(BaseProvider):
@@ -150,3 +171,7 @@ class OpenAICompatibleProvider(BaseProvider):
                 for v in accum.values()
             ]
             yield _ChatResponse(message=_ChatMessage(tool_calls=tool_calls))
+
+    async def list_models(self) -> list[ModelInfo]:
+        response = await self.client.models.list()
+        return [ModelInfo(name=m.id) for m in response.data]

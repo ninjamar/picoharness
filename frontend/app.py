@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import signal
 import uuid
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,17 +11,19 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import NestedCompleter
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.shortcuts import choice, print_formatted_text
 from prompt_toolkit.styles import Style
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
+from tabulate import tabulate
 
 from backend import (
     Backend,
     DoneEvent,
     Event,
+    ModelInfo,
     ResponseEvent,
     ThinkingEvent,
     ToolErrorEvent,
@@ -54,7 +56,7 @@ class _ResponseSegment:
 class Command:
     name: str
     description: str
-    handler: Callable[["ChatFrontend", list[str]], None]
+    handler: Callable[["ChatFrontend", list[str]], Awaitable[None]]
     completions: dict[str, Any] | None = None
 
 
@@ -66,6 +68,9 @@ _CMD_STYLE = Style.from_dict(
         "desc": "italic",
         "head": "bold underline",
         "args": "dim",
+        "selected-option": "fg:ansigreen bold",
+        "number": "fg:ansicyan",
+        "current-marker": "bold",
     }
 )
 
@@ -121,11 +126,10 @@ class ChatFrontend:
                 [
                     Command("help", "Show available commands", ChatFrontend._cmd_help),
                     Command("quit", "Exit the application", ChatFrontend._cmd_quit),
+                    Command("model", "View and select the active model", ChatFrontend._cmd_model),
                 ]
             )
         )
-
-        self._live: Live | None = None
 
         self._bindings = self._setup_bindings()
 
@@ -136,7 +140,7 @@ class ChatFrontend:
         nested: dict[str, Any] = {f"/{name}": (cmd.completions or None) for name, cmd in self._commands.items()}
         return NestedCompleter.from_nested_dict(nested)
 
-    def _dispatch_command(self, raw: str) -> None:
+    async def _dispatch_command(self, raw: str) -> None:
         parts = raw.lstrip("/").split()
         if not parts:
             return
@@ -147,9 +151,9 @@ class ChatFrontend:
                 style=_CMD_STYLE,
             )
             return
-        self._commands[name].handler(self, args)
+        await self._commands[name].handler(self, args)
 
-    def _cmd_help(self, args: list[str]) -> None:
+    async def _cmd_help(self, args: list[str]) -> None:
         lines: list[tuple[str, str]] = [("class:head", "Available commands:\n\n")]
         for name in sorted(self._commands.keys()):
             cmd = self._commands[name]
@@ -165,8 +169,60 @@ class ChatFrontend:
         lines.append(("", "\n"))
         print_formatted_text(FormattedText(lines), style=_CMD_STYLE)
 
-    def _cmd_quit(self, args: list[str]) -> None:
+    async def _cmd_quit(self, args: list[str]) -> None:
         raise EOFError()
+
+    async def _cmd_model(self, args: list[str]) -> None:
+        models = await self._backend.config.get_available_models()
+        current = self._backend.config.model
+
+        # Sort models by name
+        sorted_models = sorted(models, key=lambda m: m.name)
+
+        # Prepare rows for table formatting
+        rows = []
+        for m in sorted_models:
+            rows.append(
+                [
+                    m.name,
+                    m.parameter_size or "",
+                    m.quantization_level or "",
+                ]
+            )
+
+        # Format as table using tabulate
+        table_str = tabulate(rows, headers=["NAME", "SIZE", "QUANT"], tablefmt="plain")
+
+        # Extract formatted rows (skip header line)
+        table_lines = table_str.split("\n")
+        formatted_rows = [line for line in table_lines[1:] if line.strip()]
+
+        # Build values tuples from sorted models and formatted rows
+        # Make the model name bold if it's the currently used model
+        values = []
+        for m, row in zip(sorted_models, formatted_rows):
+            if m.name == current:
+                # Make only the name part bold
+                name_len = len(m.name)
+                label = FormattedText([("class:current-marker", row[:name_len]), ("", row[name_len:])])
+            else:
+                label = row
+            values.append((m.name, label))
+
+        selected = await asyncio.to_thread(
+            choice,
+            message=f"Select Model (current: {current})",
+            options=values,
+            default=current,
+            style=_CMD_STYLE,
+        )
+
+        if selected and selected != current:
+            await self._backend.config.set_model(selected)
+            print_formatted_text(
+                FormattedText([("class:cmd", f"Model set to: {selected}\n")]),
+                style=_CMD_STYLE,
+            )
 
     def _setup_bindings(self) -> KeyBindings:
         bindings = get_input_bindings()
@@ -199,7 +255,7 @@ class ChatFrontend:
                             continue
 
                         if user_text.startswith("/"):
-                            self._dispatch_command(user_text)
+                            await self._dispatch_command(user_text)
                             continue
                     except KeyboardInterrupt, EOFError:  # This is valid Python 3.14 synax: see PEP PEP 758
                         self._console.print("\n[dim]Bye.[/dim]")
@@ -240,7 +296,7 @@ class ChatFrontend:
 
     async def _collect_turn(self, input_id: str, events_gen: AsyncGenerator) -> None:
         segments: list[_Segment] = []
-        with Live(console=self._console, auto_refresh=False) as live:
+        with Live(console=self._console, auto_refresh=False, vertical_overflow="visible") as live:
             async for event in events_gen:
                 if event.id != input_id:
                     # TODO: This doesn't handle a non-linear flow: other events are just dropped
@@ -282,7 +338,7 @@ class ChatFrontend:
     def _print_header(self) -> None:
         self._console.rule("[bold]LocalAI Chat[/bold]")
         newline_hint = "Shift+Enter" if self.kitty.use_kitty else "Ctrl+J"
-        self._console.print(f"[dim]Ctrl+C or Ctrl+D to quit • {newline_hint} for newline[/dim]\n")
+        self._console.print(f"[dim]Ctrl+C or Ctrl+D to quit • {newline_hint} for newline • /help for help[/dim]\n")
 
 
 def cli() -> None:
@@ -308,5 +364,6 @@ def cli() -> None:
     prompt_path = Path(args.system_prompt_path) if args.system_prompt_path else SYSTEM_PROMPT_PATH
     if prompt_path.exists():
         system_prompt = prompt_path.read_text()
+
     backend = Backend(provider=provider, model=args.model, think=args.think, tools=tools, system_prompt=system_prompt)
     ChatFrontend(backend=backend).run()

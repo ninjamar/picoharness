@@ -15,7 +15,7 @@ from backend.events import (
     ToolStartEvent,
     UserInputEvent,
 )
-from backend.provider.provider import BaseProvider
+from backend.provider.provider import BaseProvider, ModelInfo
 from backend.tools import BaseTool, ReadFileTool
 
 ALLOWED_TOOLS: list[type[BaseTool]] = [ReadFileTool]
@@ -56,6 +56,22 @@ def _format_system_prompt(prompt: str, tool_classes: list[type[BaseTool]]) -> st
     return prompt.replace("{{tools}}", _get_tool_info(tool_classes))
 
 
+class BackendConfig:
+    def __init__(self, provider: BaseProvider, backend: "Backend") -> None:
+        self._provider = provider
+        self._backend = backend
+
+    @property
+    def model(self) -> str:
+        return self._backend._model
+
+    async def get_available_models(self) -> list[ModelInfo]:
+        return await self._provider.list_models()
+
+    async def set_model(self, model: str) -> None:
+        self._backend._model = model
+
+
 class Backend:
     def __init__(
         self,
@@ -86,6 +102,8 @@ class Backend:
         self._event_queue: asyncio.Queue[Event | object] = asyncio.Queue()
         self._process_task: asyncio.Task | None = None
         self._current_turn_task: asyncio.Task | None = None
+
+        self.config = BackendConfig(provider, self)
 
     async def __aenter__(self) -> "Backend":
         init_tasks = [asyncio.create_task(self._init_tool(cls)) for cls in self._tool_classes]
