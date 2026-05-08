@@ -2,12 +2,17 @@ import argparse
 import asyncio
 import signal
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import NestedCompleter
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.styles import Style
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -26,7 +31,6 @@ from backend import (
 )
 from backend.backend import ALLOWED_TOOLS
 from backend.provider.provider import OllamaProvider, OpenAICompatibleProvider
-from frontend.commands import CommandDispatcher
 from frontend.kitty import Kitty, get_input_bindings
 
 MAX_TOOL_OUTPUT = 500
@@ -46,7 +50,24 @@ class _ResponseSegment:
     text: str
 
 
+@dataclass
+class Command:
+    name: str
+    description: str
+    handler: Callable[["ChatFrontend", list[str]], None]
+    completions: dict[str, Any] | None = None
+
+
 _Segment = _ThinkingSegment | _ResponseSegment | ToolStartEvent | ToolOutputEvent | ToolErrorEvent
+
+_CMD_STYLE = Style.from_dict(
+    {
+        "cmd": "bold cyan",
+        "desc": "italic",
+        "head": "bold underline",
+        "args": "dim",
+    }
+)
 
 
 def _fmt_tool_input(inp: dict | str) -> str:
@@ -94,15 +115,58 @@ class ChatFrontend:
         self._backend = backend
         self._console = Console(highlight=False, markup=True)
 
-        self._dispatcher = CommandDispatcher()
-
-        self._prompt = PromptSession(completer=self._dispatcher.completer)
+        self._commands: dict[str, Command] = {}
+        self._prompt = PromptSession(
+            completer=self._register_commands(
+                [
+                    Command("help", "Show available commands", ChatFrontend._cmd_help),
+                    Command("quit", "Exit the application", ChatFrontend._cmd_quit),
+                ]
+            )
+        )
 
         self._live: Live | None = None
 
         self._bindings = self._setup_bindings()
 
         self.kitty = Kitty()
+
+    def _register_commands(self, commands: list[Command]) -> NestedCompleter:
+        self._commands = {cmd.name: cmd for cmd in commands}
+        nested: dict[str, Any] = {f"/{name}": (cmd.completions or None) for name, cmd in self._commands.items()}
+        return NestedCompleter.from_nested_dict(nested)
+
+    def _dispatch_command(self, raw: str) -> None:
+        parts = raw.lstrip("/").split()
+        if not parts:
+            return
+        name, args = parts[0], parts[1:]
+        if name not in self._commands:
+            print_formatted_text(
+                FormattedText([("class:cmd", f"Unknown command: /{name}. Type /help for available commands.\n")]),
+                style=_CMD_STYLE,
+            )
+            return
+        self._commands[name].handler(self, args)
+
+    def _cmd_help(self, args: list[str]) -> None:
+        lines: list[tuple[str, str]] = [("class:head", "Available commands:\n\n")]
+        for name in sorted(self._commands.keys()):
+            cmd = self._commands[name]
+            lines += [
+                ("class:cmd", f"  /{cmd.name}"),
+                ("", "  "),
+                ("class:desc", cmd.description),
+                ("", "\n"),
+            ]
+            if cmd.completions:
+                keys = ", ".join(sorted(cmd.completions.keys()))
+                lines.append(("class:args", f"    args: {keys}\n"))
+        lines.append(("", "\n"))
+        print_formatted_text(FormattedText(lines), style=_CMD_STYLE)
+
+    def _cmd_quit(self, args: list[str]) -> None:
+        raise EOFError()
 
     def _setup_bindings(self) -> KeyBindings:
         bindings = get_input_bindings()
@@ -130,19 +194,20 @@ class ChatFrontend:
                 with self.kitty:
                     try:
                         user_text = await self._read_input()
+
+                        if not user_text.strip():
+                            continue
+
+                        if user_text.startswith("/"):
+                            self._dispatch_command(user_text)
+                            continue
                     except KeyboardInterrupt, EOFError:  # This is valid Python 3.14 synax: see PEP PEP 758
                         self._console.print("\n[dim]Bye.[/dim]")
                         break
-                    if not user_text.strip():
-                        continue
 
-                    if user_text.startswith("/"):
-                        self._dispatcher.dispatch(user_text)
-                        continue
+                input_id = str(uuid.uuid4())
 
-                    input_id = str(uuid.uuid4())
-
-                    self._backend.feed(input_id, user_text)
+                self._backend.feed(input_id, user_text)
 
                 loop = asyncio.get_event_loop()
                 task = asyncio.ensure_future(self._collect_turn(input_id, events_gen))
