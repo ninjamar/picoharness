@@ -33,7 +33,7 @@ from backend import (
 )
 from backend.backend import ALLOWED_TOOLS
 from backend.provider.provider import OllamaProvider, OpenAICompatibleProvider
-from frontend.kitty import Kitty, get_input_bindings
+from frontend.input import Kitty, get_input_bindings
 
 MAX_TOOL_OUTPUT = 500
 
@@ -131,7 +131,7 @@ class ChatFrontend:
             )
         )
 
-        self._bindings = self._setup_bindings()
+        self._bindings = get_input_bindings()
 
         self.kitty = Kitty()
 
@@ -200,6 +200,10 @@ class ChatFrontend:
         def _escape(event: Any) -> None:
             event.app.exit(result=None)
 
+        @escape_kb.add("c-c")
+        def _ctrl_c(event: Any) -> None:
+            event.app.exit(result=None)
+
         choice_input = ChoiceInput(
             message=f"Select Model (current: {current})",
             options=values,
@@ -222,19 +226,6 @@ class ChatFrontend:
                 style=_CMD_STYLE,
             )
 
-    def _setup_bindings(self) -> KeyBindings:
-        bindings = get_input_bindings()
-
-        @bindings.add("c-c")
-        def _(event):
-            # If there's text in the buffer, clear it; otherwise exit
-            if event.app.current_buffer.text:
-                event.app.current_buffer.text = ""
-            else:
-                event.app.exit(exception=KeyboardInterrupt())
-
-        return bindings
-
     def run(self) -> None:
         """Sync entry point — creates event loop and runs the chat."""
         asyncio.run(self._run_async())
@@ -246,15 +237,15 @@ class ChatFrontend:
 
             while True:
                 try:
-                    with self.kitty:  # Only use Kitty protocol for user input
+                    with self.kitty:  # Kitty protocol for input and menus
                         user_text = await self._read_input()
 
-                    if not user_text.strip():
-                        continue
+                        if not user_text.strip():
+                            continue
 
-                    if user_text.startswith("/"):
-                        await self._dispatch_command(user_text)
-                        continue
+                        if user_text.startswith("/"):
+                            await self._dispatch_command(user_text)
+                            continue
                 except KeyboardInterrupt, EOFError:  # This is valid Python 3.14 synax: see PEP PEP 758
                     self._console.print("\n[dim]Bye.[/dim]")
                     break

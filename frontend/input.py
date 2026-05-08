@@ -80,33 +80,39 @@ def get_input_bindings() -> KeyBindings:
     def _(event):
         event.current_buffer.insert_text("\n")
 
+    @kb.add("c-c")
+    def _(event):
+        if event.app.current_buffer.text:
+            event.app.current_buffer.text = ""
+        else:
+            event.app.exit(exception=KeyboardInterrupt())
+
     return kb
 
 
-def init_kitty(check_supported=True) -> None:
+def init_kitty(enabled: bool = True) -> None:
     """Initialize kitty keyboard protocol: register sequences and enable protocol."""
-    if check_supported and not detect_kitty():
+    if not enabled:
         return
     register_sequences()  # TODO: Is there a cost to this operation?
     sys.stdout.write("\x1b[>1u")
     sys.stdout.flush()
 
 
-def end_kitty(check_supported=True) -> None:
+def end_kitty(enabled: bool = True) -> None:
     """Disable kitty keyboard protocol."""
-    if check_supported and not detect_kitty():
+    if not enabled:
         return
     sys.stdout.write("\x1b[<u")
     sys.stdout.flush()
 
 
 class Kitty:
-    def __init__(self, check_supported=True):
-        self.check_supported = check_supported
+    def __init__(self):
         self.use_kitty = detect_kitty()
 
     def __enter__(self):
-        init_kitty(self.check_supported)
+        init_kitty(self.use_kitty)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        end_kitty(self.check_supported)
+        end_kitty(self.use_kitty)
