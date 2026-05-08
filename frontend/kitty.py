@@ -67,7 +67,7 @@ def register_sequences() -> None:
         ANSI_SEQUENCES[f"\x1b[{97 + i};5u"] = key
 
 
-def make_input_bindings() -> KeyBindings:
+def get_input_bindings() -> KeyBindings:
     kb = KeyBindings()
 
     @kb.add("enter")
@@ -81,14 +81,30 @@ def make_input_bindings() -> KeyBindings:
     return kb
 
 
-def init_kitty() -> None:
+def init_kitty(check_supported=True) -> None:
     """Initialize kitty keyboard protocol: register sequences and enable protocol."""
+    if check_supported and not detect_kitty():
+        return
     register_sequences()  # TODO: Is there a cost to this operation?
     sys.stdout.write("\x1b[>1u")
     sys.stdout.flush()
 
 
-def end_kitty() -> None:
+def end_kitty(check_supported=True) -> None:
     """Disable kitty keyboard protocol."""
+    if check_supported and not detect_kitty():
+        return
     sys.stdout.write("\x1b[<u")
     sys.stdout.flush()
+
+
+class Kitty:
+    def __init__(self, check_supported=True):
+        self.check_supported = check_supported
+        self.use_kitty = detect_kitty()
+
+    def __enter__(self):
+        init_kitty(self.check_supported)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        end_kitty(self.check_supported)

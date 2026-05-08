@@ -26,7 +26,8 @@ from backend import (
 )
 from backend.backend import ALLOWED_TOOLS
 from backend.provider.provider import OllamaProvider, OpenAICompatibleProvider
-from frontend import kitty
+from frontend.commands import CommandDispatcher
+from frontend.kitty import Kitty, get_input_bindings
 
 MAX_TOOL_OUTPUT = 500
 
@@ -92,18 +93,19 @@ class ChatFrontend:
     def __init__(self, backend: Backend) -> None:
         self._backend = backend
         self._console = Console(highlight=False, markup=True)
-        self._prompt = PromptSession()
+
+        self._dispatcher = CommandDispatcher()
+
+        self._prompt = PromptSession(completer=self._dispatcher.completer)
 
         self._live: Live | None = None
 
-        self._use_kitty = kitty.detect_kitty()
         self._bindings = self._setup_bindings()
 
-        if self._use_kitty:
-            kitty.init_kitty()  # TODO: should the use guard be included in init_kitty?
+        self.kitty = Kitty()
 
     def _setup_bindings(self) -> KeyBindings:
-        bindings = kitty.make_input_bindings()
+        bindings = get_input_bindings()
 
         @bindings.add("c-c")
         def _(event):
@@ -120,12 +122,12 @@ class ChatFrontend:
         asyncio.run(self._run_async())
 
     async def _run_async(self) -> None:
-        try:
-            async with self._backend:
-                self._print_header()
-                events_gen = self._backend.stream_events()
+        async with self._backend:
+            self._print_header()
+            events_gen = self._backend.stream_events()
 
-                while True:
+            while True:
+                with self.kitty:
                     try:
                         user_text = await self._read_input()
                     except KeyboardInterrupt, EOFError:  # This is valid Python 3.14 synax: see PEP PEP 758
@@ -134,32 +136,29 @@ class ChatFrontend:
                     if not user_text.strip():
                         continue
 
+                    if user_text.startswith("/"):
+                        self._dispatcher.dispatch(user_text)
+                        continue
+
                     input_id = str(uuid.uuid4())
 
                     self._backend.feed(input_id, user_text)
 
-                    if self._use_kitty:
-                        kitty.end_kitty()
-                    loop = asyncio.get_event_loop()
-                    task = asyncio.ensure_future(self._collect_turn(input_id, events_gen))
-                    loop.add_signal_handler(signal.SIGINT, task.cancel)
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        # Pressing ctrl-c causes the cancellation which then gets sent to the backend.
-                        # For consistency, the backend still sends DoneEvent with interrupt = true
-                        self._backend.cancel_current()
-                        self._console.print("\n[dim]Interrupted.[/dim]")
-                        events_gen = self._backend.stream_events()
-                    finally:
-                        loop.remove_signal_handler(signal.SIGINT)
-                        if self._use_kitty:
-                            kitty.init_kitty()
+                loop = asyncio.get_event_loop()
+                task = asyncio.ensure_future(self._collect_turn(input_id, events_gen))
+                loop.add_signal_handler(signal.SIGINT, task.cancel)
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    # Pressing ctrl-c causes the cancellation which then gets sent to the backend.
+                    # For consistency, the backend still sends DoneEvent with interrupt = true
+                    self._backend.cancel_current()
+                    self._console.print("\n[dim]Interrupted.[/dim]")
+                    events_gen = self._backend.stream_events()
+                finally:
+                    loop.remove_signal_handler(signal.SIGINT)
 
-                    self._console.print()
-        finally:
-            if self._use_kitty:
-                kitty.end_kitty()
+                self._console.print()
 
     async def _read_input(self) -> str:
         return await self._prompt.prompt_async(
@@ -217,7 +216,7 @@ class ChatFrontend:
 
     def _print_header(self) -> None:
         self._console.rule("[bold]LocalAI Chat[/bold]")
-        newline_hint = "Shift+Enter" if self._use_kitty else "Ctrl+J"
+        newline_hint = "Shift+Enter" if self.kitty.use_kitty else "Ctrl+J"
         self._console.print(f"[dim]Ctrl+C or Ctrl+D to quit • {newline_hint} for newline[/dim]\n")
 
 
