@@ -11,13 +11,13 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import NestedCompleter
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.shortcuts import choice, print_formatted_text
+from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.shortcuts.choice_input import ChoiceInput
 from prompt_toolkit.styles import Style
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
-from tabulate import tabulate
 
 from backend import (
     Backend,
@@ -175,47 +175,45 @@ class ChatFrontend:
     async def _cmd_model(self, args: list[str]) -> None:
         models = await self._backend.config.get_available_models()
         current = self._backend.config.model
-
-        # Sort models by name
         sorted_models = sorted(models, key=lambda m: m.name)
 
-        # Prepare rows for table formatting
-        rows = []
-        for m in sorted_models:
-            rows.append(
-                [
-                    m.name,
-                    m.parameter_size or "",
-                    m.quantization_level or "",
-                ]
-            )
+        names = [m.name for m in sorted_models]
+        sizes = [m.parameter_size or "" for m in sorted_models]
+        quants = [m.quantization_level or "" for m in sorted_models]
 
-        # Format as table using tabulate
-        table_str = tabulate(rows, headers=["NAME", "SIZE", "QUANT"], tablefmt="plain")
+        name_w = max((len(n) for n in names), default=0)
+        size_w = max((len(s) for s in sizes), default=0)
 
-        # Extract formatted rows (skip header line)
-        table_lines = table_str.split("\n")
-        formatted_rows = [line for line in table_lines[1:] if line.strip()]
-
-        # Build values tuples from sorted models and formatted rows
-        # Make the model name bold if it's the currently used model
         values = []
-        for m, row in zip(sorted_models, formatted_rows):
-            if m.name == current:
-                # Make only the name part bold
-                name_len = len(m.name)
-                label = FormattedText([("class:current-marker", row[:name_len]), ("", row[name_len:])])
-            else:
-                label = row
+        for m, name, size, quant in zip(sorted_models, names, sizes, quants):
+            rest = f"{name:<{name_w}}  {size:<{size_w}}  {quant}"[len(name) :]
+            label = (
+                FormattedText([("class:current-marker", name), ("", rest)])
+                if m.name == current
+                else f"{name:<{name_w}}  {size:<{size_w}}  {quant}"
+            )
             values.append((m.name, label))
 
-        selected = await asyncio.to_thread(
-            choice,
+        escape_kb = KeyBindings()
+
+        @escape_kb.add("escape")
+        def _escape(event: Any) -> None:
+            event.app.exit(result=None)
+
+        choice_input = ChoiceInput(
             message=f"Select Model (current: {current})",
             options=values,
             default=current,
             style=_CMD_STYLE,
+            key_bindings=escape_kb,
         )
+        app = choice_input._create_application()
+        app.erase_when_done = True
+
+        try:
+            selected = await asyncio.to_thread(app.run)
+        except KeyboardInterrupt:
+            selected = None
 
         if selected and selected != current:
             await self._backend.config.set_model(selected)
@@ -247,19 +245,19 @@ class ChatFrontend:
             events_gen = self._backend.stream_events()
 
             while True:
-                with self.kitty:
-                    try:
+                try:
+                    with self.kitty:  # Only use Kitty protocol for user input
                         user_text = await self._read_input()
 
-                        if not user_text.strip():
-                            continue
+                    if not user_text.strip():
+                        continue
 
-                        if user_text.startswith("/"):
-                            await self._dispatch_command(user_text)
-                            continue
-                    except KeyboardInterrupt, EOFError:  # This is valid Python 3.14 synax: see PEP PEP 758
-                        self._console.print("\n[dim]Bye.[/dim]")
-                        break
+                    if user_text.startswith("/"):
+                        await self._dispatch_command(user_text)
+                        continue
+                except KeyboardInterrupt, EOFError:  # This is valid Python 3.14 synax: see PEP PEP 758
+                    self._console.print("\n[dim]Bye.[/dim]")
+                    break
 
                 input_id = str(uuid.uuid4())
 

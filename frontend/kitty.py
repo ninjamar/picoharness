@@ -62,7 +62,9 @@ _CTRL_KEYS = [
 
 def register_sequences() -> None:
     """Register kitty keyboard protocol escape sequences with prompt_toolkit."""
-    ANSI_SEQUENCES["\x1b[13;2u"] = Keys.ControlJ
+    ANSI_SEQUENCES["\x1b[13;2u"] = Keys.ControlJ  # Shift+Enter
+    ANSI_SEQUENCES["\x1b[27u"] = Keys.Escape
+
     for i, key in enumerate(_CTRL_KEYS):
         ANSI_SEQUENCES[f"\x1b[{97 + i};5u"] = key
 
