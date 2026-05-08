@@ -32,6 +32,8 @@ MAX_TOOL_OUTPUT = 500
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "files" / "system_prompt.md"
 
+# _ISO2022_RE = re.compile(r"\x1b[()][0-9A-Za-z]")
+
 
 @dataclass
 class _ThinkingSegment:
@@ -164,6 +166,12 @@ class ChatFrontend:
             "> ",
             multiline=True,
             key_bindings=self._bindings,
+            # message=ANSI(
+            #     # However, the ANSI class (which handles the escape codes from blessed) doesn't
+            #     # support some of blessed's generated output --a zero width character or something.
+            #     # So, a regex is used to remove it.
+            #     _ISO2022_RE.sub("", self._term.bold_green(">>> "))
+            # )
         )
 
     async def _collect_turn(self, input_id: str, events_gen: AsyncGenerator) -> None:
