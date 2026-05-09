@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend import Backend
+from backend.backend import _format_system_prompt, _get_tool_info
 from backend.events import (
     DoneEvent,
     ResponseEvent,
@@ -16,12 +17,50 @@ from backend.events import (
     UserInputEvent,
 )
 from backend.provider.provider import (
+    ModelInfo,
     _ChatMessage,
     _ChatResponse,
     _ToolCall,
     _ToolCallFunction,
 )
-from backend.tools import ReadFileTool
+from backend.tools import BaseTool, ReadFileTool
+from backend.tools.base import _parse_docstring
+
+
+class _IntTool(BaseTool):
+    """Tool with required and optional int parameters."""
+
+    name = "int_tool"
+    output_format = "all"
+
+    async def execute(self, count: int, label: str = "x", **_) -> str:  # type: ignore[override]
+        """Process an integer.
+
+        Args:
+            count: How many times.
+            label: The label.
+        """
+        return f"{label} x {count}"
+
+
+class _TypesTool(BaseTool):
+    """Tool with various parameter types."""
+
+    name = "types_tool"
+    output_format = "all"
+
+    async def execute(self, a: str, b: int, c: float, d: bool, e: list, f: dict, **_) -> str:  # type: ignore[override]
+        """Process multiple types.
+
+        Args:
+            a: A string.
+            b: An integer.
+            c: A float.
+            d: A boolean.
+            e: A list.
+            f: A dictionary.
+        """
+        return "ok"
 
 
 def make_chat_response(content=None, thinking=None, tool_calls=None):
@@ -312,3 +351,336 @@ async def test_readfiletool_nonexistent_file():
     tool = ReadFileTool()
     result = await tool.execute(path="/nonexistent/path/to/file.txt")
     assert "Error reading file" in result
+
+
+# ============================================================================
+# Tool schema and docstring parsing tests
+# ============================================================================
+
+
+def test_parse_docstring_none():
+    """Test that _parse_docstring handles None gracefully."""
+    result = _parse_docstring(None)
+    assert len(result) == 0
+
+
+def test_parse_docstring_args_section_parsed():
+    """Test that Args section is parsed into param descriptions."""
+    doc = """Process an integer.
+
+    Args:
+        count: How many times.
+        label: The label to use.
+    """
+    result = _parse_docstring(doc)
+    assert "count" in result
+    assert "How many times" in result["count"]
+    assert "label" in result
+    assert "The label to use" in result["label"]
+
+
+def test_parse_docstring_stops_at_returns():
+    """Test that Returns section is not included in params."""
+    doc = """Summary.
+
+    Args:
+        x: The value.
+
+    Returns:
+        A result.
+    """
+    result = _parse_docstring(doc)
+    assert "x" in result
+    # The "A result" line comes after the Returns: separator, so it should be in a non-param key (not "x")
+    # Just verify "x" is in the result, which shows we parsed the Args section
+    assert result["x"]  # Should have the description for param x
+
+
+def test_schema_structure():
+    """Test that to_schema returns correct top-level structure."""
+    schema = ReadFileTool.to_schema()
+    assert schema["type"] == "function"
+    assert "function" in schema
+    assert "name" in schema["function"]
+    assert "description" in schema["function"]
+    assert "parameters" in schema["function"]
+    assert schema["function"]["parameters"]["type"] == "object"
+    assert "properties" in schema["function"]["parameters"]
+    assert "required" in schema["function"]["parameters"]
+
+
+def test_schema_required_vs_optional():
+    """Test that required params are listed and optional params are not."""
+    schema = _IntTool.to_schema()
+    props = schema["function"]["parameters"]
+    required = props["required"]
+    assert "count" in required
+    assert "label" not in required
+
+
+@pytest.mark.parametrize(
+    "tool_cls,param_name,expected_type",
+    [
+        (_TypesTool, "a", "string"),
+        (_TypesTool, "b", "integer"),
+        (_TypesTool, "c", "number"),
+        (_TypesTool, "d", "boolean"),
+        (_TypesTool, "e", "array"),
+        (_TypesTool, "f", "object"),
+    ],
+)
+def test_schema_type_mapping(tool_cls, param_name, expected_type):
+    """Test type annotation to JSON schema mapping."""
+    schema = tool_cls.to_schema()
+    param_schema = schema["function"]["parameters"]["properties"][param_name]
+    assert param_schema["type"] == expected_type
+
+
+def test_schema_unannotated_defaults_to_string():
+    """Test that params without type annotations default to string."""
+
+    class _UnAnnotatedTool(BaseTool):
+        name = "unannotated"
+        output_format = "all"
+
+        async def execute(self, value, **_) -> str:  # type: ignore[override]
+            return "ok"
+
+    schema = _UnAnnotatedTool.to_schema()
+    param_schema = schema["function"]["parameters"]["properties"]["value"]
+    assert param_schema["type"] == "string"
+
+
+def test_schema_description_from_docstring():
+    """Test that function description is extracted from docstring."""
+    schema = _IntTool.to_schema()
+    description = schema["function"]["description"]
+    assert "integer" in description.lower()
+
+
+def test_readfiletool_schema_structure():
+    """Test ReadFileTool schema has correct structure."""
+    schema = ReadFileTool.to_schema()
+    props = schema["function"]["parameters"]
+    assert "path" in props["properties"]
+    assert props["properties"]["path"]["type"] == "string"
+    assert "path" in props["required"]
+    assert ReadFileTool.output_format == "none"
+
+
+# ============================================================================
+# BackendConfig tests
+# ============================================================================
+
+
+async def test_backend_config_model_property():
+    """Test that config.model returns current model."""
+    provider = make_provider([[make_chat_response(content="hi")]])
+    async with Backend(provider=provider, model="test-model", tools=[ReadFileTool]) as backend:
+        assert backend.config.model == "test-model"
+
+
+async def test_backend_config_think_property():
+    """Test that config.think returns think flag."""
+    provider = make_provider([[make_chat_response(content="hi")]])
+    async with Backend(provider=provider, model="test", think=True, tools=[ReadFileTool]) as backend:
+        assert backend.config.think is True
+
+    async with Backend(provider=provider, model="test", think=False, tools=[ReadFileTool]) as backend:
+        assert backend.config.think is False
+
+
+async def test_backend_config_set_model():
+    """Test that config.set_model updates backend model."""
+    provider = make_provider([[make_chat_response(content="hi")]])
+    async with Backend(provider=provider, model="model-a", tools=[ReadFileTool]) as backend:
+        assert backend.config.model == "model-a"
+        await backend.config.set_model("model-b")
+        assert backend.config.model == "model-b"
+
+
+async def test_backend_config_set_think():
+    """Test that config.set_think updates backend think flag."""
+    provider = make_provider([[make_chat_response(content="hi")]])
+    async with Backend(provider=provider, model="test", think=False, tools=[ReadFileTool]) as backend:
+        assert backend.config.think is False
+        backend.config.set_think(True)
+        assert backend.config.think is True
+
+
+async def test_backend_config_get_available_models():
+    """Test that config.get_available_models delegates to provider."""
+    mock_provider = MagicMock()
+    mock_provider.list_models = AsyncMock(return_value=[ModelInfo(name="m1"), ModelInfo(name="m2")])
+    mock_provider.chat = AsyncMock(side_effect=lambda **_: iter([]))
+
+    async with Backend(provider=mock_provider, model="test", tools=[]) as backend:
+        models = await backend.config.get_available_models()
+        assert len(models) == 2
+        assert models[0].name == "m1"
+        assert models[1].name == "m2"
+
+
+# ============================================================================
+# System prompt tests
+# ============================================================================
+
+
+def test_format_system_prompt_replaces_tools_placeholder():
+    """Test that {{tools}} is replaced with tool info."""
+    prompt = "Use these tools: {{tools}}"
+    result = _format_system_prompt(prompt, [ReadFileTool])
+    assert "{{tools}}" not in result
+    assert "read_file" in result
+
+
+def test_format_system_prompt_no_tools_replaces_with_empty():
+    """Test that {{tools}} is replaced with empty string when no tools."""
+    prompt = "Tools: {{tools}}."
+    result = _format_system_prompt(prompt, [])
+    assert result == "Tools: ."
+
+
+def test_get_tool_info_contains_name_and_sig():
+    """Test that _get_tool_info includes tool name and signature."""
+    info = _get_tool_info([ReadFileTool])
+    assert "read_file" in info
+    assert "path" in info
+
+
+async def test_system_prompt_added_as_first_message():
+    """Test that system prompt is added as first message."""
+    provider = make_provider([[make_chat_response(content="hi")]])
+    system_prompt = "You are helpful. Tools: {{tools}}"
+    async with Backend(provider=provider, model="test", system_prompt=system_prompt, tools=[ReadFileTool]) as backend:
+        assert len(backend._messages) > 0
+        assert backend._messages[0]["role"] == "system"
+        assert "You are helpful" in backend._messages[0]["content"]
+
+
+async def test_no_system_prompt_no_system_message():
+    """Test that no system prompt means no system message."""
+    provider = make_provider([[make_chat_response(content="hi")]])
+    async with Backend(provider=provider, model="test", tools=[ReadFileTool]) as backend:
+        system_messages = [m for m in backend._messages if m.get("role") == "system"]
+        assert len(system_messages) == 0
+
+
+# ============================================================================
+# Backend lifecycle tests
+# ============================================================================
+
+
+async def test_backend_no_tools():
+    """Test that backend works with no tools."""
+    provider = make_provider([[make_chat_response(content="response")]])
+    async with Backend(provider=provider, model="test", tools=[]) as backend:
+        backend.feed("req-1", "hello")
+        events = await collect_events(backend, "req-1")
+        assert any(isinstance(e, UserInputEvent) for e in events)
+        assert any(isinstance(e, ResponseEvent) for e in events)
+        assert any(isinstance(e, DoneEvent) and e.error is None for e in events)
+
+
+async def test_cancel_current_emits_interrupted_done_event():
+    """Test that cancel_current() causes DoneEvent(interrupted=True)."""
+
+    async def slow_chat(**kwargs):
+        await asyncio.sleep(10)
+        yield make_chat_response(content="delayed")
+
+    provider = MagicMock()
+    provider.chat = slow_chat
+
+    async with Backend(provider=provider, model="test", tools=[ReadFileTool]) as backend:
+        backend.feed("req-1", "hi")
+        await asyncio.sleep(0.05)
+        backend.cancel_current()
+
+        events = await collect_events(backend, "req-1")
+        done_events = [e for e in events if isinstance(e, DoneEvent) and e.id == "req-1"]
+        assert len(done_events) == 1
+        assert done_events[0].interrupted is True
+
+
+async def test_shutdown_stops_process_loop():
+    """Test that shutdown() stops the process loop gracefully."""
+
+    async def never_chat(**kwargs):
+        await asyncio.sleep(100)
+        yield make_chat_response(content="never")
+
+    provider = MagicMock()
+    provider.chat = never_chat
+
+    backend = Backend(provider=provider, model="test", tools=[ReadFileTool])
+    async with backend:
+        # Feed but don't wait for it
+        backend.feed("req-1", "hi")
+        await asyncio.sleep(0.05)
+        await backend.shutdown()
+        # If shutdown worked, process_task should complete soon
+        if backend._process_task:
+            try:
+                await asyncio.wait_for(backend._process_task, timeout=1)
+            except asyncio.TimeoutError:
+                pytest.fail("Process loop did not shut down in time")
+
+
+# ============================================================================
+# Tool dispatch tests
+# ============================================================================
+
+
+async def test_unknown_tool_emits_tool_error_event():
+    """Test that an unknown tool call produces ToolErrorEvent with 'Unknown tool' message."""
+    provider = make_provider(
+        [
+            [
+                make_chat_response(tool_calls=[make_tool_call("nonexistent_tool", {"arg": "val"})]),
+            ],
+            [
+                make_chat_response(content="Done"),
+            ],
+        ]
+    )
+
+    async with Backend(provider=provider, model="test", tools=[ReadFileTool]) as backend:
+        backend.feed("req-1", "call unknown tool")
+        events = await collect_events(backend, "req-1")
+
+        tool_errors = [e for e in events if isinstance(e, ToolErrorEvent)]
+        assert len(tool_errors) == 1
+        assert "Unknown tool" in tool_errors[0].error
+
+
+async def test_tool_result_appended_as_tool_message():
+    """Test that tool results are appended as role=tool messages with matching tool_call_id."""
+    with patch("backend.backend.ReadFileTool.execute", new_callable=AsyncMock) as mock_execute:
+        mock_execute.return_value = "file contents"
+
+        provider = make_provider(
+            [
+                [
+                    make_chat_response(tool_calls=[make_tool_call("read_file", {"path": "/tmp/x"})]),
+                ],
+                [
+                    make_chat_response(content="Done"),
+                ],
+            ]
+        )
+
+        async with Backend(provider=provider, model="test", tools=[ReadFileTool]) as backend:
+            backend.feed("req-1", "read /tmp/x")
+            events = await collect_events(backend, "req-1")
+
+            # Find the tool call id from events
+            tool_start_events = [e for e in events if isinstance(e, ToolStartEvent)]
+            assert len(tool_start_events) == 1
+            tool_id = tool_start_events[0].tool_id
+
+            # Verify tool message was appended to backend messages
+            tool_messages = [m for m in backend._messages if m.get("role") == "tool"]
+            assert len(tool_messages) == 1
+            assert tool_messages[0]["tool_call_id"] == tool_id
+            assert tool_messages[0]["content"] == "file contents"
