@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import signal
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,7 +23,6 @@ from backend import (
     Backend,
     DoneEvent,
     Event,
-    ModelInfo,
     ResponseEvent,
     ThinkingEvent,
     ToolErrorEvent,
@@ -52,12 +51,138 @@ class _ResponseSegment:
     text: str
 
 
-@dataclass
 class Command:
     name: str
     description: str
-    handler: Callable[["ChatFrontend", list[str]], Awaitable[None]]
     completions: dict[str, Any] | None = None
+
+    @staticmethod
+    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
+        raise NotImplementedError
+
+
+class HelpCommand(Command):
+    name = "help"
+    description = "Show available commands"
+    completions = None
+
+    @staticmethod
+    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
+        lines: list[tuple[str, str]] = [("class:head", "Available commands:\n\n")]
+        for cmd_name in sorted(frontend._commands.keys()):
+            cmd = frontend._commands[cmd_name]
+            lines += [
+                ("class:cmd", f"  /{cmd.name}"),
+                ("", "  "),
+                ("class:desc", cmd.description),
+                ("", "\n"),
+            ]
+            if cmd.completions:
+                keys = ", ".join(sorted(cmd.completions.keys()))
+                lines.append(("class:args", f"    args: {keys}\n"))
+        lines.append(("", "\n"))
+        print_formatted_text(FormattedText(lines), style=_CMD_STYLE)
+
+
+class QuitCommand(Command):
+    name = "quit"
+    description = "Exit the application"
+    completions = None
+
+    @staticmethod
+    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
+        raise EOFError()
+
+
+class ModelCommand(Command):
+    name = "model"
+    description = "View and select the active model, or set one directly"
+    completions = None
+
+    @staticmethod
+    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
+        if args:
+            await frontend._backend.config.set_model(args[0])
+            print_formatted_text(
+                FormattedText([("class:cmd", f"Model set to: {args[0]}\n")]),
+                style=_CMD_STYLE,
+            )
+            return
+
+        models = await frontend._backend.config.get_available_models()
+        current = frontend._backend.config.model
+        sorted_models = sorted(models, key=lambda m: m.name)
+
+        names = [m.name for m in sorted_models]
+        sizes = [m.parameter_size or "" for m in sorted_models]
+        quants = [m.quantization_level or "" for m in sorted_models]
+
+        name_w = max((len(n) for n in names), default=0)
+        size_w = max((len(s) for s in sizes), default=0)
+
+        values = []
+        for m, name, size, quant in zip(sorted_models, names, sizes, quants):
+            rest = f"{name:<{name_w}}  {size:<{size_w}}  {quant}"[len(name) :]
+            label = (
+                FormattedText([("class:current-marker", name), ("", rest)])
+                if m.name == current
+                else f"{name:<{name_w}}  {size:<{size_w}}  {quant}"
+            )
+            values.append((m.name, label))
+
+        escape_kb = KeyBindings()
+
+        @escape_kb.add("escape")
+        def _escape(event: Any) -> None:
+            event.app.exit(result=None)
+
+        @escape_kb.add("c-c")
+        def _ctrl_c(event: Any) -> None:
+            event.app.exit(result=None)
+
+        choice_input = ChoiceInput(
+            message=f"Select Model (current: {current})",
+            options=values,
+            default=current,
+            style=_CMD_STYLE,
+            key_bindings=escape_kb,
+        )
+        app = choice_input._create_application()
+        app.erase_when_done = True
+
+        try:
+            selected = await asyncio.to_thread(app.run)
+        except KeyboardInterrupt:
+            selected = None
+
+        if selected and selected != current:
+            await frontend._backend.config.set_model(selected)
+            print_formatted_text(
+                FormattedText([("class:cmd", f"Model set to: {selected}\n")]),
+                style=_CMD_STYLE,
+            )
+
+
+class ThinkCommand(Command):
+    name = "think"
+    description = "Enable or disable thinking (on/off)"
+    completions = {"on": None, "off": None}
+
+    @staticmethod
+    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
+        if not args or args[0].lower() not in ("on", "off"):
+            print_formatted_text(
+                FormattedText([("class:cmd", "Usage: /think true|false\n")]),
+                style=_CMD_STYLE,
+            )
+            return
+        value = args[0].lower() == "on"
+        frontend._backend.config.set_think(value)
+        state = "enabled" if value else "disabled"
+        print_formatted_text(
+            FormattedText([("class:cmd", f"Thinking {state}\n")]),
+            style=_CMD_STYLE,
+        )
 
 
 _Segment = _ThinkingSegment | _ResponseSegment | ToolStartEvent | ToolOutputEvent | ToolErrorEvent
@@ -120,13 +245,14 @@ class ChatFrontend:
         self._backend = backend
         self._console = Console(highlight=False, markup=True)
 
-        self._commands: dict[str, Command] = {}
+        self._commands: dict[str, type[Command]] = {}
         self._prompt = PromptSession(
             completer=self._register_commands(
                 [
-                    Command("help", "Show available commands", ChatFrontend._cmd_help),
-                    Command("quit", "Exit the application", ChatFrontend._cmd_quit),
-                    Command("model", "View and select the active model", ChatFrontend._cmd_model),
+                    HelpCommand,
+                    QuitCommand,
+                    ModelCommand,
+                    ThinkCommand,
                 ]
             )
         )
@@ -135,9 +261,9 @@ class ChatFrontend:
 
         self.kitty = Kitty()
 
-    def _register_commands(self, commands: list[Command]) -> NestedCompleter:
+    def _register_commands(self, commands: list[type[Command]]) -> NestedCompleter:
         self._commands = {cmd.name: cmd for cmd in commands}
-        nested: dict[str, Any] = {f"/{name}": (cmd.completions or None) for name, cmd in self._commands.items()}
+        nested: dict[str, Any] = {f"/{cmd.name}": (cmd.completions or None) for cmd in commands}
         return NestedCompleter.from_nested_dict(nested)
 
     async def _dispatch_command(self, raw: str) -> None:
@@ -151,80 +277,7 @@ class ChatFrontend:
                 style=_CMD_STYLE,
             )
             return
-        await self._commands[name].handler(self, args)
-
-    async def _cmd_help(self, args: list[str]) -> None:
-        lines: list[tuple[str, str]] = [("class:head", "Available commands:\n\n")]
-        for name in sorted(self._commands.keys()):
-            cmd = self._commands[name]
-            lines += [
-                ("class:cmd", f"  /{cmd.name}"),
-                ("", "  "),
-                ("class:desc", cmd.description),
-                ("", "\n"),
-            ]
-            if cmd.completions:
-                keys = ", ".join(sorted(cmd.completions.keys()))
-                lines.append(("class:args", f"    args: {keys}\n"))
-        lines.append(("", "\n"))
-        print_formatted_text(FormattedText(lines), style=_CMD_STYLE)
-
-    async def _cmd_quit(self, args: list[str]) -> None:
-        raise EOFError()
-
-    async def _cmd_model(self, args: list[str]) -> None:
-        models = await self._backend.config.get_available_models()
-        current = self._backend.config.model
-        sorted_models = sorted(models, key=lambda m: m.name)
-
-        names = [m.name for m in sorted_models]
-        sizes = [m.parameter_size or "" for m in sorted_models]
-        quants = [m.quantization_level or "" for m in sorted_models]
-
-        name_w = max((len(n) for n in names), default=0)
-        size_w = max((len(s) for s in sizes), default=0)
-
-        values = []
-        for m, name, size, quant in zip(sorted_models, names, sizes, quants):
-            rest = f"{name:<{name_w}}  {size:<{size_w}}  {quant}"[len(name) :]
-            label = (
-                FormattedText([("class:current-marker", name), ("", rest)])
-                if m.name == current
-                else f"{name:<{name_w}}  {size:<{size_w}}  {quant}"
-            )
-            values.append((m.name, label))
-
-        escape_kb = KeyBindings()
-
-        @escape_kb.add("escape")
-        def _escape(event: Any) -> None:
-            event.app.exit(result=None)
-
-        @escape_kb.add("c-c")
-        def _ctrl_c(event: Any) -> None:
-            event.app.exit(result=None)
-
-        choice_input = ChoiceInput(
-            message=f"Select Model (current: {current})",
-            options=values,
-            default=current,
-            style=_CMD_STYLE,
-            key_bindings=escape_kb,
-        )
-        app = choice_input._create_application()
-        app.erase_when_done = True
-
-        try:
-            selected = await asyncio.to_thread(app.run)
-        except KeyboardInterrupt:
-            selected = None
-
-        if selected and selected != current:
-            await self._backend.config.set_model(selected)
-            print_formatted_text(
-                FormattedText([("class:cmd", f"Model set to: {selected}\n")]),
-                style=_CMD_STYLE,
-            )
+        await self._commands[name].execute(self, args)
 
     def run(self) -> None:
         """Sync entry point — creates event loop and runs the chat."""

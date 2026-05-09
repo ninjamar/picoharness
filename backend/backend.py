@@ -65,11 +65,18 @@ class BackendConfig:
     def model(self) -> str:
         return self._backend._model
 
+    @property
+    def think(self) -> bool:
+        return self._backend._think
+
     async def get_available_models(self) -> list[ModelInfo]:
         return await self._provider.list_models()
 
     async def set_model(self, model: str) -> None:
         self._backend._model = model
+
+    def set_think(self, value: bool) -> None:
+        self._backend._think = value
 
 
 class Backend:

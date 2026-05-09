@@ -12,7 +12,7 @@ class ReadFileTool(BaseTool):
     output_format = "none"  # Don't print output since they are too large to show
 
     # IMPORTANT: Do not add any other parameters exept for what is needed as tool calls are constructed from the annotation
-    async def execute(self, path: str = "") -> str:
+    async def execute(self, path) -> str:
         """Read the contents of a file on disk and return them as a string.
 
         Args:
