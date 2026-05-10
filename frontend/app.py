@@ -40,6 +40,18 @@ SYSTEM_PROMPT_PATH = Path(__file__).parent / "files" / "system_prompt.md"
 
 # _ISO2022_RE = re.compile(r"\x1b[()][0-9A-Za-z]")
 
+_CMD_STYLE = Style.from_dict(
+    {
+        "cmd": "bold cyan",
+        "desc": "italic",
+        "head": "bold underline",
+        "args": "dim",
+        "selected-option": "fg:ansigreen bold",
+        "number": "fg:ansicyan",
+        "current-marker": "bold",
+    }
+)
+
 
 @dataclass
 class _ThinkingSegment:
@@ -51,13 +63,29 @@ class _ResponseSegment:
     text: str
 
 
+class _ShowUsageMessage(Exception):
+    pass
+
+
 class Command:
     name: str
     description: str
+    usage_message: str | None = None
     completions: dict[str, Any] | None = None
 
+    @classmethod
+    async def execute(cls, frontend: "ChatFrontend", args: list[str]) -> None:
+        try:
+            await cls._execute(frontend, args)
+        except _ShowUsageMessage:
+            if cls.usage_message:
+                print_formatted_text(
+                    FormattedText([("class:cmd", cls.usage_message + "\n")]),
+                    style=_CMD_STYLE,
+                )
+
     @staticmethod
-    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
+    async def _execute(frontend: "ChatFrontend", args: list[str]) -> None:
         raise NotImplementedError
 
 
@@ -67,7 +95,7 @@ class HelpCommand(Command):
     completions = None
 
     @staticmethod
-    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
+    async def _execute(frontend: "ChatFrontend", args: list[str]) -> None:
         lines: list[tuple[str, str]] = [("class:head", "Available commands:\n\n")]
         for cmd_name in sorted(frontend._commands.keys()):
             cmd = frontend._commands[cmd_name]
@@ -80,6 +108,8 @@ class HelpCommand(Command):
             if cmd.completions:
                 keys = ", ".join(sorted(cmd.completions.keys()))
                 lines.append(("class:args", f"    args: {keys}\n"))
+            if cmd.usage_message:
+                lines.append(("class:args", f"    {cmd.usage_message}\n"))
         lines.append(("", "\n"))
         print_formatted_text(FormattedText(lines), style=_CMD_STYLE)
 
@@ -90,17 +120,17 @@ class QuitCommand(Command):
     completions = None
 
     @staticmethod
-    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
+    async def _execute(frontend: "ChatFrontend", args: list[str]) -> None:
         raise EOFError()
 
 
 class ModelCommand(Command):
     name = "model"
-    description = "View and select the active model, or set one directly"
+    description = "List available models and select interactively, or set by name"
     completions = None
 
     @staticmethod
-    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
+    async def _execute(frontend: "ChatFrontend", args: list[str]) -> None:
         if args:
             await frontend._backend.config.set_model(args[0])
             print_formatted_text(
@@ -165,39 +195,47 @@ class ModelCommand(Command):
 
 class ThinkCommand(Command):
     name = "think"
-    description = "Enable or disable thinking (on/off)"
-    completions = {"on": None, "off": None}
+    description = "Toggle extended thinking mode on/off, or control thinking output visibility with 'view'"
+    usage_message = "Usage: /think on|off|view [show|hide]"
+    completions = {
+        "on": None,
+        "off": None,
+        "view": {"show": None, "hide": None},  # Separate so it is clear that it is changing the view
+    }
 
     @staticmethod
-    async def execute(frontend: "ChatFrontend", args: list[str]) -> None:
-        if not args or args[0].lower() not in ("on", "off"):
-            print_formatted_text(
-                FormattedText([("class:cmd", "Usage: /think true|false\n")]),
-                style=_CMD_STYLE,
-            )
-            return
-        value = args[0].lower() == "on"
-        frontend._backend.config.set_think(value)
-        state = "enabled" if value else "disabled"
-        print_formatted_text(
-            FormattedText([("class:cmd", f"Thinking {state}\n")]),
-            style=_CMD_STYLE,
-        )
+    async def _execute(frontend: "ChatFrontend", args: list[str]) -> None:
+        if not args or args[0].lower() not in ("on", "off", "view"):
+            raise _ShowUsageMessage()
+        match val := args[0].lower():
+            case "on" | "off":
+                action = val == "on"
+                frontend._backend.config.set_think(action)
+                value = args[0].lower() == "on"
+                state = "enabled" if value else "disabled"
+                print_formatted_text(
+                    FormattedText([("class:cmd", f"Thinking {state}\n")]),
+                    style=_CMD_STYLE,
+                )
+            case "view":
+                sub = args[1].lower() if len(args) > 1 else None
+                match sub:
+                    case "show":
+                        frontend._show_thinking = True
+                    case "hide":
+                        frontend._show_thinking = False
+                    case None:
+                        frontend._show_thinking = not frontend._show_thinking
+                    case _:
+                        raise _ShowUsageMessage()
+                state = "visible" if frontend._show_thinking else "hidden"
+                print_formatted_text(
+                    FormattedText([("class:cmd", f"Thinking output {state}\n")]),
+                    style=_CMD_STYLE,
+                )
 
 
 _Segment = _ThinkingSegment | _ResponseSegment | ToolStartEvent | ToolOutputEvent | ToolErrorEvent
-
-_CMD_STYLE = Style.from_dict(
-    {
-        "cmd": "bold cyan",
-        "desc": "italic",
-        "head": "bold underline",
-        "args": "dim",
-        "selected-option": "fg:ansigreen bold",
-        "number": "fg:ansicyan",
-        "current-marker": "bold",
-    }
-)
 
 
 def _fmt_tool_input(inp: dict | str) -> str:
@@ -209,13 +247,14 @@ def _fmt_tool_input(inp: dict | str) -> str:
     return ", ".join(f"{k}={v!r}" for k, v in items)
 
 
-def _build_live(segments):
+def _build_live(segments, show_thinking: bool = True):
     """Build live display from typed segments."""
     parts = []
     for seg in segments:
         match seg:
             case _ThinkingSegment(text=text):
-                parts.append(Text(text, style="dim italic"))
+                if show_thinking:
+                    parts.append(Text(text, style="dim italic"))
             case _ResponseSegment(text=text):
                 parts.append(Markdown(text))
             case ToolStartEvent(tool_name=name, tool_input=inp):
@@ -244,6 +283,7 @@ class ChatFrontend:
     def __init__(self, backend: Backend) -> None:
         self._backend = backend
         self._console = Console(highlight=False, markup=True)
+        self._show_thinking: bool = True
 
         self._commands: dict[str, type[Command]] = {}
         self._prompt = PromptSession(
@@ -374,7 +414,7 @@ class ChatFrontend:
             case ToolStartEvent() | ToolOutputEvent() | ToolErrorEvent():
                 segments.append(event)
 
-        live.update(_build_live(segments))
+        live.update(_build_live(segments, self._show_thinking))
         live.refresh()
 
     def _print_header(self) -> None:
