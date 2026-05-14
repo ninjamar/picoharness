@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
-from xmlrpc.client import boolean
 
 __all__ = [
     "Event",

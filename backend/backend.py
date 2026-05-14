@@ -17,8 +17,17 @@ from backend.events import (
 )
 from backend.provider.provider import BaseProvider, ModelInfo
 from backend.tools import BaseTool, ReadFileTool
+from backend.tools.web.browse import ReadWebPage, SearchAndReadWeb, SearchWeb
+from backend.tools.web.wikipedia import GetWikipediaPage, SearchWikipedia
 
-ALLOWED_TOOLS: list[type[BaseTool]] = [ReadFileTool]
+ALLOWED_TOOLS: list[type[BaseTool]] = [
+    ReadFileTool,
+    ReadWebPage,
+    SearchWeb,
+    SearchAndReadWeb,
+    SearchWikipedia,
+    GetWikipediaPage,
+]
 
 _SENTINEL = object()
 
@@ -30,7 +39,7 @@ class _InputSentinel:
     pass
 
 
-_tool_execution_result = namedtuple("ToolExecutionResult", ["result", "error", "output_format"])
+ToolExecutionResult = namedtuple("ToolExecutionResult", ["result", "error", "output_format"])
 
 
 def _get_tool_info(tool_classes: list[type[BaseTool]]) -> str:
@@ -106,7 +115,7 @@ class Backend:
         )
         # print(_format_system_prompt(system_prompt, self._tool_classes))
         self._input_queue: asyncio.Queue[tuple[str, str] | _InputSentinel] = asyncio.Queue()
-        self._event_queue: asyncio.Queue[Event | object] = asyncio.Queue()
+        self._event_queue: asyncio.Queue[Event | _InputSentinel] = asyncio.Queue()
         self._process_task: asyncio.Task | None = None
         self._current_turn_task: asyncio.Task | None = None
 
@@ -125,7 +134,7 @@ class Backend:
                 await self._process_task
             except asyncio.CancelledError:
                 pass
-        await self._event_queue.put(_SENTINEL)
+        await self._event_queue.put(_SENTINEL)  # type: ignore
 
     @staticmethod
     async def _init_tool(tool_cls: type[BaseTool]) -> BaseTool:
@@ -241,7 +250,7 @@ class Backend:
                                 tool_id=tool_id,
                                 tool_name=name,
                                 result=output or "",
-                                output_format=output_format,  # type: ignore[arg-type]
+                                output_format=output_format,  # type: ignore
                             )
                         )
 
@@ -270,13 +279,13 @@ class Backend:
             self._messages.append({"role": "system", "content": f"Error: {str(e)}"})
             await self._event_queue.put(DoneEvent(id=input_id, error=str(e), interrupted=False))
 
-    async def _execute_tool(self, name: str, args: dict):
+    async def _execute_tool(self, name: str, args: dict) -> ToolExecutionResult:
         """Returns (output, error). One will be None, the other will have a value."""
         for instance in self._tool_instances:
             if instance.name == name:
                 try:
                     result = await instance.execute(**args)
-                    return _tool_execution_result(result=result, error=None, output_format=instance.output_format)
+                    return ToolExecutionResult(result=result, error=None, output_format=instance.output_format)
                 except Exception as exc:
-                    return _tool_execution_result(result=None, error=str(exc), output_format=None)
-        return _tool_execution_result(result=None, error=f"Unknown tool: {name}", output_format=None)
+                    return ToolExecutionResult(result=None, error=str(exc), output_format=None)
+        return ToolExecutionResult(result=None, error=f"Unknown tool: {name}", output_format=None)
