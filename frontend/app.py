@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import signal
+import tomllib
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -13,6 +14,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.shortcuts.choice_input import ChoiceInput
 from prompt_toolkit.styles import Style
+from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -36,6 +38,18 @@ from frontend.input import Kitty, get_input_bindings
 MAX_TOOL_OUTPUT = 500
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "files" / "system_prompt.md"
+
+TOOL_NAME_MAP: dict[str, type] = {tool.name: tool for tool in ALLOWED_TOOLS}
+
+
+class AppConfig(BaseModel):
+    model: str
+    provider: str
+    think: bool = False
+    show_think: bool = True
+    system_prompt_path: str | None = None
+    enabled_tools: list[str] = Field(default_factory=lambda: [t.name for t in ALLOWED_TOOLS])
+
 
 # _ISO2022_RE = re.compile(r"\x1b[()][0-9A-Za-z]")
 
@@ -234,10 +248,10 @@ def _fmt_tool_input(inp: dict | str) -> str:
 
 
 class ChatFrontend:
-    def __init__(self, backend: Backend) -> None:
+    def __init__(self, backend: Backend, show_think: bool = True) -> None:
         self._backend = backend
         self._console = Console(highlight=False, markup=True)
-        self._show_thinking: bool = True
+        self._show_thinking: bool = show_think
 
         self._commands: dict[str, type[Command]] = {}
         self._prompt = PromptSession(
@@ -310,6 +324,10 @@ class ChatFrontend:
                     # Pressing ctrl-c causes the cancellation which then gets sent to the backend.
                     # For consistency, the backend still sends DoneEvent with interrupt = true
                     self._backend.cancel_current()
+                    if self._active_live is not None:
+                        self._active_live.stop()
+                        self._active_live = None
+                        self._console.print()
                     self._console.print("\n[dim]Interrupted.[/dim]")
                     events_gen = self._backend.stream_events()
                 finally:
@@ -332,16 +350,16 @@ class ChatFrontend:
 
     async def _collect_turn(self, input_id: str, events_gen: AsyncGenerator) -> None:
         response_buffer = ""
-        live: Live | None = None
+        self._active_live: Live | None = None
 
         async for event in events_gen:
             if event.id != input_id:
                 continue
 
             # Commit any active response Live before handling non-response events
-            if not isinstance(event, ResponseEvent) and live is not None:
-                live.stop()
-                live = None
+            if not isinstance(event, ResponseEvent) and self._active_live is not None:
+                self._active_live.stop()
+                self._active_live = None
                 response_buffer = ""
                 self._console.print()
 
@@ -353,15 +371,15 @@ class ChatFrontend:
                         self._console.print(Text(f, style="dim italic"), end="")
                 case ResponseEvent(fragment=f):
                     response_buffer += f
-                    if live is None:
-                        live = Live(
+                    if self._active_live is None:
+                        self._active_live = Live(
                             Markdown(response_buffer),
                             console=self._console,
                             auto_refresh=False,
                             vertical_overflow="ellipsis",
                         )
-                        live.start()
-                    live.update(Markdown(response_buffer), refresh=True)
+                        self._active_live.start()
+                    self._active_live.update(Markdown(response_buffer), refresh=True)
                 case ToolStartEvent(tool_name=name, tool_input=inp):
                     label = f"⏺ {name}({_fmt_tool_input(inp)})"
                     self._console.print(label, style="bold blue")
@@ -385,8 +403,9 @@ class ChatFrontend:
             if isinstance(event, DoneEvent):
                 break
 
-        if live is not None:
-            live.stop()
+        if self._active_live is not None:
+            self._active_live.stop()
+            self._active_live = None
             self._console.print()
 
     def _print_header(self) -> None:
@@ -395,29 +414,79 @@ class ChatFrontend:
         self._console.print(f"[dim]Ctrl+C or Ctrl+D to quit • {newline_hint} for newline • /help for help[/dim]\n")
 
 
+def load_config(path: Path, preset: str | None = None) -> AppConfig:
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+
+    if not data:
+        raise SystemExit("Config file is empty")
+
+    if preset is None:
+        preset = next(iter(data))
+
+    if preset not in data:
+        raise SystemExit(f"Preset '{preset}' not found. Available: {list(data.keys())}")
+
+    return AppConfig.model_validate(data[preset])
+
+
+def generate_config(path: Path) -> None:
+    all_tools = [t.name for t in ALLOWED_TOOLS]
+    wikipedia_tools = ["search_wikipedia", "get_wikipedia_page"]
+
+    lines = [
+        "[base]",
+        'model = "qwen2.5:3b"',
+        'provider = "ollama"',
+        "think = false",
+        "show_think = true",
+        '# system_prompt_path = "/path/to/system_prompt.md"',
+        f"enabled_tools = {all_tools!r}".replace("'", '"'),
+        "",
+        "[search_wikipedia]",
+        'model = "qwen2.5:3b"',
+        'provider = "ollama"',
+        f"enabled_tools = {wikipedia_tools!r}".replace("'", '"'),
+    ]
+    path.write_text("\n".join(lines) + "\n")
+    print(f"Config written to {path}")
+
+
 def cli() -> None:
     parser = argparse.ArgumentParser(description="LocalAI TUI")
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--provider", required=True, help="'ollama' or 'host:port' for OpenAI-compatible")
-    parser.add_argument("--think", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--config", default=None, help="Path to TOML config file")
+    parser.add_argument("--preset", default=None, help="Preset name (default: first section)")
     parser.add_argument(
-        "--system-prompt-path",
+        "--generate-config",
+        metavar="PATH",
         default=None,
-        help="Path to a markdown file used as the system prompt",
+        help="Generate a sample config file at PATH and exit",
     )
     args = parser.parse_args()
 
-    tools = ALLOWED_TOOLS
+    if args.generate_config:
+        generate_config(Path(args.generate_config))
+        return
 
-    if args.provider == "ollama":
-        provider = OllamaProvider()
-    else:
-        provider = OpenAICompatibleProvider(base_url=f"http://{args.provider}/v1")
+    if not args.config:
+        parser.error("--config is required (or use --generate-config PATH to create one)")
+
+    cfg = load_config(Path(args.config), args.preset)
+
+    tools = []
+    for name in cfg.enabled_tools:
+        if name not in TOOL_NAME_MAP:
+            raise SystemExit(f"Unknown tool '{name}'. Valid: {list(TOOL_NAME_MAP.keys())}")
+        tools.append(TOOL_NAME_MAP[name])
+
+    provider = (
+        OllamaProvider() if cfg.provider == "ollama" else OpenAICompatibleProvider(base_url=f"http://{cfg.provider}/v1")
+    )
 
     system_prompt = None
-    prompt_path = Path(args.system_prompt_path) if args.system_prompt_path else SYSTEM_PROMPT_PATH
+    prompt_path = Path(cfg.system_prompt_path) if cfg.system_prompt_path else SYSTEM_PROMPT_PATH
     if prompt_path.exists():
         system_prompt = prompt_path.read_text()
 
-    backend = Backend(provider=provider, model=args.model, think=args.think, tools=tools, system_prompt=system_prompt)
-    ChatFrontend(backend=backend).run()
+    backend = Backend(provider=provider, model=cfg.model, think=cfg.think, tools=tools, system_prompt=system_prompt)
+    ChatFrontend(backend=backend, show_think=cfg.show_think).run()
