@@ -3,7 +3,6 @@ import asyncio
 import signal
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +13,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.shortcuts.choice_input import ChoiceInput
 from prompt_toolkit.styles import Style
-from rich.console import Console, Group
+from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
@@ -51,16 +50,6 @@ _CMD_STYLE = Style.from_dict(
         "current-marker": "bold",
     }
 )
-
-
-@dataclass
-class _ThinkingSegment:
-    text: str
-
-
-@dataclass
-class _ResponseSegment:
-    text: str
 
 
 class _ShowUsageMessage(Exception):
@@ -235,9 +224,6 @@ class ThinkCommand(Command):
                 )
 
 
-_Segment = _ThinkingSegment | _ResponseSegment | ToolStartEvent | ToolOutputEvent | ToolErrorEvent
-
-
 def _fmt_tool_input(inp: dict | str) -> str:
     if not isinstance(inp, dict):
         return repr(inp)
@@ -245,38 +231,6 @@ def _fmt_tool_input(inp: dict | str) -> str:
     if len(items) == 1:
         return repr(items[0][1])
     return ", ".join(f"{k}={v!r}" for k, v in items)
-
-
-def _build_live(segments, show_thinking: bool = True):
-    """Build live display from typed segments."""
-    parts = []
-    for seg in segments:
-        match seg:
-            case _ThinkingSegment(text=text):
-                if show_thinking:
-                    parts.append(Text(text, style="dim italic"))
-            case _ResponseSegment(text=text):
-                parts.append(Markdown(text))
-            case ToolStartEvent(tool_name=name, tool_input=inp):
-                parts.append(Text(f"\n⏺ {name}({_fmt_tool_input(inp)})", style="bold blue"))
-            case ToolOutputEvent(result=result, output_format=fmt):
-                match fmt:
-                    case "all":
-                        parts.append(Text(result, style="dim cyan"))
-                    case "truncate":
-                        if len(result) > MAX_TOOL_OUTPUT:
-                            result = result[:MAX_TOOL_OUTPUT] + "… [truncated]"
-                        lines = [f"  {line}" for line in result.splitlines()]
-                        parts.append(Text("\n".join(lines), style="dim cyan"))
-                    case "none":
-                        pass
-            case ToolErrorEvent(error=err):
-                parts.append(Text(f"  Error: {err}", style="red"))
-            case DoneEvent(error=error):
-                if error:
-                    parts.append(Text(f"Error: {error}", style="red"))
-
-    return Group(*parts) if parts else Group()
 
 
 class ChatFrontend:
@@ -339,7 +293,7 @@ class ChatFrontend:
                         if user_text.startswith("/"):
                             await self._dispatch_command(user_text)
                             continue
-                except KeyboardInterrupt, EOFError:  # This is valid Python 3.14 synax: see PEP PEP 758
+                except KeyboardInterrupt, EOFError:
                     self._console.print("\n[dim]Bye.[/dim]")
                     break
 
@@ -377,45 +331,63 @@ class ChatFrontend:
         )
 
     async def _collect_turn(self, input_id: str, events_gen: AsyncGenerator) -> None:
-        segments: list[_Segment] = []
-        with Live(console=self._console, auto_refresh=False, vertical_overflow="visible") as live:
-            async for event in events_gen:
-                if event.id != input_id:
-                    # TODO: This doesn't handle a non-linear flow: other events are just dropped
-                    # What should happen: events are always caught, then they are put in a queue.
-                    # Then this function would operate on that queue
-                    continue
-                self._render_event(live, segments, event)
-                if isinstance(event, DoneEvent):
-                    # This should NOT be in _render_event as _collecting turn stops here.
-                    # Only rendered in case of error
-                    # if event.error:
-                    #    self._console.print(f"\n[red]Error: {event.error}[/red]")
-                    break
+        response_buffer = ""
+        live: Live | None = None
 
-    def _render_event(self, live: Live, segments, event: Event) -> None:
-        match event:
-            case UserInputEvent():
-                return
-            case DoneEvent():
-                # There could be an error, so display it
-                segments.append(event)
-            case ThinkingEvent(fragment=f):
-                # Merge segments
-                if segments and isinstance(segments[-1], _ThinkingSegment):
-                    segments[-1].text += f
-                else:
-                    segments.append(_ThinkingSegment(f))
-            case ResponseEvent(fragment=f):
-                if segments and isinstance(segments[-1], _ResponseSegment):
-                    segments[-1].text += f
-                else:
-                    segments.append(_ResponseSegment(f))
-            case ToolStartEvent() | ToolOutputEvent() | ToolErrorEvent():
-                segments.append(event)
+        async for event in events_gen:
+            if event.id != input_id:
+                continue
 
-        live.update(_build_live(segments, self._show_thinking))
-        live.refresh()
+            # Commit any active response Live before handling non-response events
+            if not isinstance(event, ResponseEvent) and live is not None:
+                live.stop()
+                live = None
+                response_buffer = ""
+                self._console.print()
+
+            match event:
+                case UserInputEvent():
+                    pass
+                case ThinkingEvent(fragment=f):
+                    if self._show_thinking:
+                        self._console.print(Text(f, style="dim italic"), end="")
+                case ResponseEvent(fragment=f):
+                    response_buffer += f
+                    if live is None:
+                        live = Live(
+                            Markdown(response_buffer),
+                            console=self._console,
+                            auto_refresh=False,
+                            vertical_overflow="ellipsis",
+                        )
+                        live.start()
+                    live.update(Markdown(response_buffer), refresh=True)
+                case ToolStartEvent(tool_name=name, tool_input=inp):
+                    label = f"⏺ {name}({_fmt_tool_input(inp)})"
+                    self._console.print(label, style="bold blue")
+                case ToolOutputEvent(result=result, output_format=fmt):
+                    match fmt:
+                        case "all":
+                            self._console.print(result, style="cyan dim")
+                        case "truncate":
+                            if len(result) > MAX_TOOL_OUTPUT:
+                                result = result[:MAX_TOOL_OUTPUT] + "… [truncated]"
+                            indented = "\n".join(f"  {line}" for line in result.splitlines())
+                            self._console.print(indented, style="cyan dim")
+                        case "none":
+                            pass
+                case ToolErrorEvent(error=err):
+                    self._console.print(f"  Error: {err}", style="red")
+                case DoneEvent(error=error):
+                    if error:
+                        self._console.print(f"Error: {error}", style="red")
+
+            if isinstance(event, DoneEvent):
+                break
+
+        if live is not None:
+            live.stop()
+            self._console.print()
 
     def _print_header(self) -> None:
         self._console.rule("[bold]LocalAI Chat[/bold]")
