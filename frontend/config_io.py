@@ -7,7 +7,7 @@ from typing import Any
 import tomlkit
 from pydantic import Field, create_model
 
-from frontend.commands import FIELDS, FieldDef
+from frontend.schema import FIELDS, FieldDef
 
 
 def _field_spec(f: FieldDef):

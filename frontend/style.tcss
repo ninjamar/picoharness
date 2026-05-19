@@ -1,0 +1,31 @@
+Screen {
+    layout: vertical;
+}
+
+#chat-log {
+    height: 1fr;
+    border: none;
+    scrollbar-gutter: stable;
+}
+
+#streaming-panel {
+    height: auto;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+
+#command-panel {
+    height: auto;
+    background: $surface;
+    border-top: solid $accent;
+    padding: 1;
+}
+
+#input-area {
+    height: 5;
+    border: tall $accent;
+}
+
+.hidden {
+    display: none;
+}
