@@ -50,7 +50,7 @@ class MultiSelectMenu(BaseMenu):
 @dataclass
 class FieldDef:
     name: str
-    type: type
+    type: Any
     default: Any
     description: str
     menu: BaseMenu
@@ -262,8 +262,14 @@ async def _resolve_choices(choices: Any, frontend: "ChatFrontend") -> list:
 
 async def _prompt_text(label: str = "Enter value: ") -> str | None:
     """Prompt for free-text value. Returns None if empty/cancelled."""
+    kb = KeyBindings()
 
-    text = (await asyncio.to_thread(prompt, label)).strip()
+    @kb.add("escape")
+    @kb.add("c-c")
+    def _cancel(event: Any) -> None:
+        event.app.exit(result="")
+
+    text = (await asyncio.to_thread(prompt, label, key_bindings=kb)).strip()
     return text if text else None
 
 
@@ -302,7 +308,7 @@ async def _run_multi_choice_input(
 
     kb = KeyBindings()
 
-    @kb.add("enter")
+    @kb.add("enter", eager=True)
     def _confirm(event: Any) -> None:
         event.app.exit(result=cb_list.current_values)
 
