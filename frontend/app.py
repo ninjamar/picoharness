@@ -15,8 +15,9 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
-from backend import (
-    Backend,
+from backend.api import (
+    ALL_TOOLS,
+    BackendAPI,
     DoneEvent,
     ResponseEvent,
     ThinkingEvent,
@@ -25,8 +26,7 @@ from backend import (
     ToolStartEvent,
     UserInputEvent,
 )
-from backend.backend import ALL_TOOLS
-from backend.provider.provider import OllamaProvider, OpenAICompatibleProvider
+from backend.provider import OllamaProvider, OpenAICompatibleProvider
 from frontend.commands import build_all_commands
 from frontend.config_io import generate_config, load_config
 from frontend.input import Kitty, get_input_bindings
@@ -39,8 +39,6 @@ MAX_TOOL_OUTPUT = 500
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "files" / "system_prompt.md"
 
-TOOL_NAME_MAP: dict[str, type] = {tool.name: tool for tool in ALL_TOOLS}
-
 
 def _fmt_tool_input(inp: dict | str) -> str:
     if not isinstance(inp, dict):
@@ -52,8 +50,8 @@ def _fmt_tool_input(inp: dict | str) -> str:
 
 
 class ChatFrontend:
-    def __init__(self, backend: Backend, show_think: bool = True) -> None:
-        self.backend = backend  # Public property for schema getters/setters
+    def __init__(self, api: BackendAPI, show_think: bool = True) -> None:
+        self.api = api  # Public property for schema getters/setters
         self._console = Console(highlight=False, markup=True)
         self._show_thinking: bool = show_think
 
@@ -98,9 +96,9 @@ class ChatFrontend:
         asyncio.run(self._run_async())
 
     async def _run_async(self) -> None:
-        async with self.backend:
+        async with self.api:
             self._print_header()
-            events_gen = self.backend.stream_events()
+            events_gen = self.api.stream_events()
 
             while True:
                 try:
@@ -119,7 +117,7 @@ class ChatFrontend:
 
                 input_id = str(uuid.uuid4())
 
-                self.backend.feed(input_id, user_text)
+                self.api.feed(input_id, user_text)
 
                 loop = asyncio.get_event_loop()
                 task = asyncio.ensure_future(self._collect_turn(input_id, events_gen))
@@ -129,13 +127,13 @@ class ChatFrontend:
                 except asyncio.CancelledError:
                     # Pressing ctrl-c causes the cancellation which then gets sent to the backend.
                     # For consistency, the backend still sends DoneEvent with interrupt = true
-                    self.backend.cancel_current()
+                    self.api.cancel_current()
                     if self._active_live is not None:
                         self._active_live.stop()
                         self._active_live = None
                         self._console.print()
                     self._console.print("\n[dim]Interrupted.[/dim]")
-                    events_gen = self.backend.stream_events()
+                    events_gen = self.api.stream_events()
                 finally:
                     loop.remove_signal_handler(signal.SIGINT)
 
@@ -241,12 +239,13 @@ def cli() -> None:
 
     cfg = load_config(Path(args.config), args.preset)
 
+    tool_name_map: dict[str, type] = {tool.name: tool for tool in ALL_TOOLS}
     tools = []
-    tool_names = cfg.enabled_tools if cfg.enabled_tools else list(TOOL_NAME_MAP.keys())
+    tool_names = cfg.enabled_tools if cfg.enabled_tools else list(tool_name_map.keys())
     for name in tool_names:
-        if name not in TOOL_NAME_MAP:
-            raise SystemExit(f"Unknown tool '{name}'. Valid: {list(TOOL_NAME_MAP.keys())}")
-        tools.append(TOOL_NAME_MAP[name])
+        if name not in tool_name_map:
+            raise SystemExit(f"Unknown tool '{name}'. Valid: {list(tool_name_map.keys())}")
+        tools.append(tool_name_map[name])
 
     provider = (
         OllamaProvider() if cfg.provider == "ollama" else OpenAICompatibleProvider(base_url=f"http://{cfg.provider}/v1")
@@ -257,12 +256,12 @@ def cli() -> None:
     if prompt_path.exists():
         system_prompt = prompt_path.read_text()
 
-    backend = Backend(
+    api = BackendAPI(
         provider=provider,
         model=cfg.model,
         think=cfg.think,
-        tools=tools,
+        tool_classes=tools,
         system_prompt=system_prompt,
         system_prompt_path=cfg.system_prompt_path,
     )
-    ChatFrontend(backend=backend, show_think=cfg.show_think).run()
+    ChatFrontend(api=api, show_think=cfg.show_think).run()

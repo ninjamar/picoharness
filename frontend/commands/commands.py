@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.shortcuts import print_formatted_text
 
-from backend.provider.provider import OllamaProvider, OpenAICompatibleProvider
+from backend.provider import OllamaProvider, OpenAICompatibleProvider
 from frontend.style import _CMD_STYLE
 
 from ._internal import (
@@ -59,13 +59,13 @@ class QuitCommand(Command):
 
 async def _fetch_models(frontend: "ChatFrontend") -> list[str]:
     """Fetch available model names from the backend at command-execution time."""
-    model_infos = await frontend.backend.config.get_available_models()
+    model_infos = await frontend.api.get_available_models()
     return [m.name for m in model_infos]
 
 
 def _get_enabled_tools(frontend: "ChatFrontend") -> list[str]:
     """Fetch all available tool names from the backend."""
-    return frontend.backend.config.get_all_tools()
+    return frontend.api.get_all_tools()
 
 
 def _set_provider(frontend: "ChatFrontend", value: str) -> None:
@@ -74,11 +74,11 @@ def _set_provider(frontend: "ChatFrontend", value: str) -> None:
         provider = OllamaProvider()
     else:
         provider = OpenAICompatibleProvider(base_url=f"http://{value}/v1")
-    frontend.backend.config.set_provider(provider)
+    frontend.api.set_provider(provider)
 
 
 _custom_provider_input = TextInputMenu(
-    get_current=lambda f: f.backend.config.provider,
+    get_current=lambda f: f.api.provider,
     set_current=_set_provider,
     label="Custom...",
 )
@@ -90,8 +90,8 @@ FIELDS = [
         default="qwen3:2b",
         description="Ollama/OpenAI-compatible model identifier",
         menu=DialogueMenu(
-            get_current=lambda f: f.backend.config.model,
-            set_current=lambda f, v: f.backend.config.set_model(v),
+            get_current=lambda f: f.api.model,
+            set_current=lambda f, v: f.api.set_model(v),
             choices=_fetch_models,
         ),
     ),
@@ -101,7 +101,7 @@ FIELDS = [
         default="ollama",
         description="Provider: 'ollama' or an OpenAI-compatible base URL",
         menu=DialogueMenu(
-            get_current=lambda f: f.backend.config.provider,
+            get_current=lambda f: f.api.provider,
             set_current=_set_provider,
             choices=lambda f: ["ollama", _custom_provider_input],
         ),
@@ -112,8 +112,8 @@ FIELDS = [
         default=False,
         description="Enable chain-of-thought / extended thinking",
         menu=ToggleMenu(
-            get_current=lambda f: f.backend.config.think,
-            set_current=lambda f, v: f.backend.config.set_think(v),
+            get_current=lambda f: f.api.think,
+            set_current=lambda f, v: f.api.set_think(v),
         ),
     ),
     FieldDef(
@@ -132,8 +132,8 @@ FIELDS = [
         default=None,
         description="Path to a Markdown system prompt file",
         menu=TextInputMenu(
-            get_current=lambda f: f.backend.config.system_prompt_path,
-            set_current=lambda f, v: f.backend.config.set_system_prompt_path(v),
+            get_current=lambda f: f.api.system_prompt_path,
+            set_current=lambda f, v: f.api.set_system_prompt_path(v),
             nullable=True,
         ),
     ),
@@ -143,8 +143,8 @@ FIELDS = [
         default=[],
         description="Tools available to the model",
         menu=MultiSelectMenu(
-            get_current=lambda f: f.backend.config.enabled_tools,
-            set_current=lambda f, v: f.backend.config.set_enabled_tools(v),
+            get_current=lambda f: f.api.enabled_tools,
+            set_current=lambda f, v: f.api.set_enabled_tools(v),
             choices=_get_enabled_tools,
         ),
     ),

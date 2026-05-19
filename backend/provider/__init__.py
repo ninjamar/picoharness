@@ -1,3 +1,3 @@
-from .provider import ModelInfo, OllamaProvider, OpenAICompatibleProvider
+from .provider import BaseProvider, ModelInfo, OllamaProvider, OpenAICompatibleProvider
 
-__all__ = ["OllamaProvider", "OpenAICompatibleProvider", "ModelInfo"]
+__all__ = ["BaseProvider", "OllamaProvider", "OpenAICompatibleProvider", "ModelInfo"]

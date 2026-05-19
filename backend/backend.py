@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 import inspect
 import uuid
 from collections import namedtuple
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from backend.api import BackendAPI
 
 from backend.events import (
     DoneEvent,
@@ -15,24 +20,8 @@ from backend.events import (
     ToolStartEvent,
     UserInputEvent,
 )
-from backend.provider.provider import (
-    BaseProvider,
-    ModelInfo,
-    OllamaProvider,
-    OpenAICompatibleProvider,
-)
-from backend.tools import BaseTool, ReadFileTool
-from backend.tools.web.browse import ReadWebPage, SearchAndReadWeb, SearchWeb
-from backend.tools.web.wikipedia import GetWikipediaPage, SearchWikipedia
-
-ALL_TOOLS: list[type[BaseTool]] = [
-    ReadFileTool,
-    ReadWebPage,
-    SearchWeb,
-    SearchAndReadWeb,
-    SearchWikipedia,
-    GetWikipediaPage,
-]
+from backend.provider import BaseProvider
+from backend.tools import BaseTool
 
 _SENTINEL = object()
 
@@ -70,71 +59,6 @@ def _format_system_prompt(prompt: str, tool_classes: list[type[BaseTool]]) -> st
     return prompt.replace("{{tools}}", _get_tool_info(tool_classes))
 
 
-class BackendConfig:
-    def __init__(self, provider: BaseProvider, backend: "Backend") -> None:
-        self._provider = provider
-        self._backend = backend
-
-    def _get_provider_name(self) -> str:
-        if isinstance(self._provider, OllamaProvider):
-            return "ollama"
-        elif isinstance(self._provider, OpenAICompatibleProvider):
-            base_url = str(self._provider.client.base_url)
-            return base_url.replace("/v1", "") if base_url.endswith("/v1") else base_url
-        return "unknown"
-
-    @property
-    def model(self) -> str:
-        return self._backend._model
-
-    @property
-    def think(self) -> bool:
-        return self._backend._think
-
-    @property
-    def provider(self) -> str:
-        return self._get_provider_name()
-
-    @property
-    def system_prompt_path(self) -> str | None:
-        return self._backend._system_prompt_path
-
-    @property
-    def enabled_tools(self) -> list[str]:
-        return [t.name for t in self._backend._tool_classes]
-
-    def get_all_tools(self) -> list[str]:
-        return [t.name for t in ALL_TOOLS]
-
-    async def get_available_models(self) -> list[ModelInfo]:
-        return await self._provider.list_models()
-
-    def set_model(self, model: str) -> None:
-        self._backend._model = model
-
-    def set_think(self, value: bool) -> None:
-        self._backend._think = value
-
-    def set_provider(self, provider: BaseProvider) -> None:
-        self._provider = provider
-        self._backend._provider = provider
-
-    def set_system_prompt_path(self, value: str | None) -> None:
-        self._backend._system_prompt_path = value
-
-    def set_enabled_tools(self, value: list[str]) -> None:
-        wildcard = "*"
-        if value == [wildcard]:
-            new_classes = list(ALL_TOOLS)
-        else:
-            name_map = {t.name: t for t in ALL_TOOLS}
-            new_classes = [name_map[n] for n in value if n in name_map]
-        self._backend._tool_classes = new_classes
-        self._backend._tool_instances = [cls() for cls in new_classes]
-        self._backend._tool_schemas = [cls.to_schema() for cls in new_classes]
-        self._provider.tool_schemas = self._backend._tool_schemas
-
-
 class Backend:
     def __init__(
         self,
@@ -168,7 +92,16 @@ class Backend:
         self._process_task: asyncio.Task | None = None
         self._current_turn_task: asyncio.Task | None = None
 
-        self.config = BackendConfig(provider, self)
+    @classmethod
+    def from_config(cls, api: BackendAPI) -> Backend:
+        return cls(
+            provider=api._provider,
+            model=api._model,
+            think=api._think,
+            tools=api._tool_classes,
+            system_prompt=api._system_prompt,
+            system_prompt_path=api._system_prompt_path,
+        )
 
     async def __aenter__(self) -> "Backend":
         init_tasks = [asyncio.create_task(self._init_tool(cls)) for cls in self._tool_classes]
