@@ -1,31 +1,98 @@
 Screen {
     layout: vertical;
+    height: 100%;
+    background: $background;
 }
 
-#chat-log {
+#chat-area {
+    display: block;
     height: 1fr;
-    border: none;
-    scrollbar-gutter: stable;
-}
-
-#streaming-panel {
-    height: auto;
-    padding: 0 1;
-    background: $surface-darken-1;
-}
-
-#command-panel {
-    height: auto;
-    background: $surface;
-    border-top: solid $accent;
-    padding: 1;
+    padding: 1 0;
+    scrollbar-visibility: hidden;
 }
 
 #input-area {
-    height: 5;
-    border: tall $accent;
+    display: block;
+    height: auto;
+    background: $background;
+    border: none;
+    border-top: solid $border;
+    padding: 0 2;
+    scrollbar-visibility: hidden;
 }
 
-.hidden {
+#input-area .text-area--cursor-line {
+    background: $surface 40%;
+}
+
+#input-overlay {
+    height: auto;
+    layout: vertical;
+}
+
+CompletionMenu {
     display: none;
+    height: auto;
+    max-height: 10;
+    background: $background;
+    border-top: solid $border;
+}
+
+CompletionMenu.visible {
+    display: block;
+}
+
+CommandPanel {
+    display: none;
+    height: auto;
+    max-height: 10;
+    background: $background;
+    border-top: solid $border;
+}
+
+CommandPanel.visible {
+    display: block;
+}
+
+CompletionMenu > ListItem.-highlight {
+    background: $accent 20%;
+}
+
+/* border (1) + padding-left (1) = 2 from edge — same as non-bordered */
+.user-msg {
+    color: $accent;
+    text-style: bold;
+    border-left: thick $accent;
+    padding: 0 2 1 1;
+}
+
+.thinking {
+    color: $text-muted;
+    text-style: italic;
+    border-left: thick $warning-darken-2;
+    padding: 0 2 1 1;
+}
+
+.tool-call {
+    color: $secondary;
+    text-style: bold;
+    border-left: thick $secondary;
+    padding: 0 2 1 1;
+}
+
+/* no border — padding-left (2) = 2 from edge */
+.response {
+    padding: 0 2 1 2;
+}
+
+/* nested under tool-call — padding-left (4) to show hierarchy */
+.tool-output {
+    color: $text-muted;
+    background: $surface 60%;
+    padding: 0 2 1 4;
+}
+
+.tool-error {
+    color: $error;
+    padding: 0 2 1 4;
 }
