@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable
-
 from pyratatui import (
     Block,
     Clear,
@@ -16,30 +12,7 @@ from pyratatui import (
     TextArea,
 )
 
-
-class CommandMode(Enum):
-    CHOICE = "choice"
-    MULTISELECT = "multiselect"
-    TEXT = "text"
-
-
-@dataclass
-class CompletionState:
-    items: list[tuple[str, str]] = field(default_factory=list)
-    index: int = 0
-    visible: bool = False
-    list_state: ListState = field(default_factory=ListState)
-
-
-@dataclass
-class CommandPanelState:
-    visible: bool = False
-    mode: CommandMode = CommandMode.CHOICE
-    choices: list[str] = field(default_factory=list)
-    selected: set[str] = field(default_factory=set)
-    list_state: ListState = field(default_factory=ListState)
-    textarea: TextArea = field(default_factory=TextArea)
-    callback: Callable[[Any], None] | None = None
+from frontend.tui.state import CommandMode, CommandPanelState, CompletionState
 
 
 def centered_rect(area: Rect, width: int, height: int) -> Rect:
@@ -87,3 +60,33 @@ def draw_command_panel(frame, area: Rect, state: CommandPanelState) -> None:
             .highlight_symbol("▶ ")
         )
         frame.render_stateful_list(list_widget, dialog_rect, state.list_state)
+
+
+def open_dialog(
+    command: CommandPanelState,
+    mode: CommandMode,
+    *,
+    choices: list[str] | None = None,
+    current: str | None = None,
+    selected: list[str] | None = None,
+    callback=None,
+) -> None:
+    command.mode = mode
+    command.choices = choices or []
+    command.selected = set(selected or [])
+    command.callback = callback
+    command.list_state = ListState()
+    if mode == CommandMode.TEXT:
+        command.textarea = TextArea.from_lines([current or ""])
+    elif current is not None and command.choices:
+        try:
+            command.list_state.select(command.choices.index(current))
+        except ValueError:
+            command.list_state.select(0)
+    else:
+        command.list_state.select(0)
+    command.visible = True
+
+
+def open_text_dialog(command: CommandPanelState, current: str | None, callback) -> None:
+    open_dialog(command, CommandMode.TEXT, current=current, callback=callback)
