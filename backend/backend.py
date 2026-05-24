@@ -56,6 +56,7 @@ def _get_tool_info(tool_classes: list[type[BaseTool]]) -> str:
 
 
 def _format_system_prompt(prompt: str, tool_classes: list[type[BaseTool]]) -> str:
+    # TODO: Use actual templating engine. pass info like date...
     return prompt.replace("{{tools}}", _get_tool_info(tool_classes))
 
 

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import inspect
 import re
+import types as builtin_types
+import typing
 from collections import defaultdict
-from typing import Any, Literal
+from typing import Any, Literal, get_type_hints
 
 
 def _parse_docstring(doc_string: str | None) -> dict[str, str]:
@@ -40,6 +42,31 @@ def _parse_docstring(doc_string: str | None) -> dict[str, str]:
     return parsed_docstring
 
 
+def _unwrap_optional(annotation: Any) -> Any:
+    """Extract the non-None type from Optional/Union types (e.g., int | None → int)."""
+    # a | B
+    if isinstance(annotation, builtin_types.UnionType):
+        args = [a for a in annotation.__args__ if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    # Optional[int] or Union[int, None]
+    if typing.get_origin(annotation) is typing.Union:
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    return annotation
+
+
+type_map = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+    list: "array",
+    dict: "object",
+}
+
+
 class BaseTool:
     name: str = ""
     output_format: Literal["all", "truncate", "none"]
@@ -52,34 +79,34 @@ class BaseTool:
 
         # Adapted from https://github.com/ollama/ollama-python/blob/main/ollama/_utils.py
 
-        doc = inspect.getdoc(cls.execute)  # find for method cls.execute
+        doc = inspect.getdoc(cls._call)  # find for method cls.execute
         parsed = _parse_docstring(doc)
         doc_key = str(hash(doc))
 
-        sig = inspect.signature(cls.execute)
+        sig = inspect.signature(cls._call)
+        # Evaluate string annotations (from __future__ import annotations)
+        try:
+            type_hints = get_type_hints(cls._call)
+        except Exception:
+            type_hints = {}
+
         properties: dict[str, Any] = {}
         required: list[str] = []
 
         for name, param in sig.parameters.items():
-            type_map = {
-                str: "string",
-                int: "integer",
-                float: "number",
-                bool: "boolean",
-                list: "array",
-                dict: "object",
-            }
-            json_type = type_map.get(param.annotation, "string")
-            if param.annotation is inspect.Parameter.empty:
-                json_type = "string"
+            if name == "self":
+                continue
 
-            if name != "self":
-                properties[name] = {
-                    "type": json_type,
-                    "description": parsed.get(name, ""),
-                }
-                if param.default is inspect.Parameter.empty:
-                    required.append(name)
+            annotation = type_hints.get(name, param.annotation)
+            resolved_annotation = _unwrap_optional(annotation)
+            json_type = type_map.get(resolved_annotation, "string")
+
+            properties[name] = {
+                "type": json_type,
+                "description": parsed.get(name, ""),
+            }
+            if param.default is inspect.Parameter.empty:
+                required.append(name)
 
         return {
             "type": "function",
@@ -94,9 +121,12 @@ class BaseTool:
             },
         }
 
-    async def execute(self, *args, **kwargs) -> str:
+    async def _call(self, *args, **kwargs) -> str:
         """
         IMPORTANT: Do not add any other parameters exept for what is needed as tool calls are constructed from the annotation
         For example, having kwargs in the annotation will pass it to the ai
         """
         raise NotImplementedError
+
+    async def execute(self, **kwargs) -> str:
+        return await self._call(**kwargs)

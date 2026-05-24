@@ -12,7 +12,7 @@ class ReadWebPage(BaseTool):
 
     output_format = "none"
 
-    async def execute(self, url: str) -> str:
+    async def _call(self, url: str) -> str:
         """
         Read the contents of a fully formed URL as markdown.
 
@@ -32,7 +32,7 @@ class SearchWeb(BaseTool):
 
     output_format = "all"
 
-    async def execute(self, query: str, num_results: int = 5) -> str:
+    async def _call(self, query: str, num_results: int = 5) -> str:
         """
         Search the web for a query and return top results.
 
@@ -57,7 +57,7 @@ class SearchAndReadWeb(BaseTool):
 
     output_format = "none"
 
-    async def execute(self, query: str, num_results: int = 3) -> str:
+    async def _call(self, query: str, num_results: int = 3) -> str:
         """
         Search the web for a query and read the contents of top results.
 

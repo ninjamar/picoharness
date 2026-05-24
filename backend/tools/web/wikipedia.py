@@ -13,7 +13,7 @@ class SearchWikipedia(BaseTool):
     name = "search_wikipedia"
     output_format = "all"
 
-    async def execute(self, query: str, limit: int = 5) -> str:
+    async def _call(self, query: str, limit: int = 5) -> str:
         """
         Search Wikipedia for articles matching a query.
 
@@ -40,7 +40,7 @@ class GetWikipediaPage(BaseTool):
     name = "get_wikipedia_page"
     output_format = "none"
 
-    async def execute(self, title: str, max_length: int | None = 3000) -> str:
+    async def _call(self, title: str, max_length: int | None = 3000) -> str:
         """
         Fetch the summary of a Wikipedia page by its title.
 
