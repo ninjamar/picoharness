@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING, Any
 from backend.provider import OllamaProvider, OpenAICompatibleProvider
 
 if TYPE_CHECKING:
-    from frontend.app import ChatApp
+    from frontend.app import ChatFrontend
 
 
 @dataclass
 class BaseMenu:
-    get_current: Any  # Callable[["ChatApp"], Any]
-    set_current: Any  # Callable[["ChatApp", Any], None]
+    get_current: Any  # Callable[["ChatFrontend"], Any]
+    set_current: Any  # Callable[["ChatFrontend", Any], None]
     label: str | None = None
 
 
@@ -46,7 +46,7 @@ class FieldDef:
     menu: BaseMenu
 
 
-async def resolve_choices(choices: Any, app: "ChatApp") -> list:
+async def resolve_choices(choices: Any, app: "ChatFrontend") -> list:
     """Resolve choices: list passthrough or call callable(app) - handles async and sync."""
     if iscoroutinefunction(choices):
         return list(await choices(app))
@@ -55,16 +55,16 @@ async def resolve_choices(choices: Any, app: "ChatApp") -> list:
     return list(choices)
 
 
-async def _fetch_models(app: "ChatApp") -> list[str]:
+async def _fetch_models(app: "ChatFrontend") -> list[str]:
     model_infos = await app.api.get_available_models()
     return [m.name for m in model_infos]
 
 
-def _get_enabled_tools(app: "ChatApp") -> list[str]:
+def _get_enabled_tools(app: "ChatFrontend") -> list[str]:
     return app.api.get_all_tools()
 
 
-def _set_provider(app: "ChatApp", value: str) -> None:
+def _set_provider(app: "ChatFrontend", value: str) -> None:
     if value == "ollama":
         provider = OllamaProvider()
     else:

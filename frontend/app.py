@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import time
 import uuid
 from pathlib import Path
 
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.containers import VerticalScroll
-from textual.widgets import Markdown, Static
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import NestedCompleter
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.shortcuts import checkboxlist_dialog, input_dialog, radiolist_dialog
+from rich.console import Console
+from rich.live import Live
+from rich.markdown import Markdown
 
 from backend.api import (
     ALL_TOOLS,
     BackendAPI,
     DoneEvent,
+    Event,
     ResponseEvent,
     ThinkingEvent,
     ToolErrorEvent,
@@ -32,15 +37,10 @@ from frontend.schema import (
     ToggleMenu,
     resolve_choices,
 )
-from frontend.widgets import InputArea, InputOverlay
 
 MAX_TOOL_OUTPUT = 500
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "files" / "system_prompt.md"
-
-_ALL_COMMANDS: list[tuple[str, str]] = [(f.name, f.description) for f in FIELDS] + [
-    ("help", "Show available commands"),
-    ("quit", "Exit the application"),
-]
+UPDATE_INTERVAL = 0.05  # seconds between Live refresh calls
 
 
 def _fmt_tool_input(inp: dict | str) -> str:
@@ -52,25 +52,37 @@ def _fmt_tool_input(inp: dict | str) -> str:
     return ", ".join(f"{k}={v!r}" for k, v in items)
 
 
-class ChatApp(App):
-    ansi_color = True
-    theme = "nord"
-    CSS_PATH = "style.tcss"
-    BINDINGS = [
-        Binding("ctrl+c", "maybe_quit", show=False, priority=True),
-    ]
+def _build_completer() -> NestedCompleter:
+    nested: dict = {f"/{f.name}": None for f in FIELDS}
+    nested["/help"] = None
+    nested["/quit"] = None
+    return NestedCompleter.from_nested_dict(nested)
 
+
+def _build_key_bindings() -> KeyBindings:
+    kb = KeyBindings()
+
+    @kb.add("c-c")
+    def _(event) -> None:
+        buf = event.app.current_buffer
+        if buf.text:
+            buf.reset()
+        else:
+            event.app.exit(exception=KeyboardInterrupt())
+
+    return kb
+
+
+class ChatFrontend:
     def __init__(self, api: BackendAPI, show_think: bool = True) -> None:
-        super().__init__(ansi_color=True)
         self.api = api
         self._show_thinking = show_think
-        self._turn_in_progress = False
-        self._current_md: Markdown | None = None
-        self._response_buf: str = ""
-        self._thinking_md: Static | None = None
-        self._thinking_buf: str = ""
-        self._last_event_type: str | None = None
-        self._history: list[str] = []
+        self._console = Console(highlight=False, markup=True)
+        self._prompt: PromptSession = PromptSession(
+            completer=_build_completer(),
+            complete_while_typing=True,
+            key_bindings=_build_key_bindings(),
+        )
 
     @property
     def show_think(self) -> bool:
@@ -79,260 +91,200 @@ class ChatApp(App):
     def set_show_think(self, value: bool) -> None:
         self._show_thinking = value
 
-    def compose(self) -> ComposeResult:
-        with VerticalScroll(id="chat-area"):
-            pass
-        yield InputOverlay(id="input-overlay")
-        yield InputArea(id="input-area", compact=True, placeholder="Type here")
+    def run(self) -> None:
+        asyncio.run(self._run_async())
 
-    async def on_mount(self) -> None:
-        chat = self.query_one("#chat-area", VerticalScroll)
-        await chat.mount(
-            Static("[bold]LocalAI[/bold]  [dim]Ctrl+C to quit · Ctrl+J for newline · /help for commands[/dim]\n")
-        )
-        self.query_one("#input-area").focus()
-        self.run_worker(self._event_loop(), exclusive=True)
+    async def _run_async(self) -> None:
+        async with self.api:
+            self._print_header()
+            while True:
+                try:
+                    text = await self._prompt.prompt_async("> ")
+                except KeyboardInterrupt, EOFError:
+                    self._console.print("\n[red]Bye.[/red]")
+                    break
+                text = text.strip()
+                if not text:
+                    continue
+                if text.startswith("/"):
+                    await self._dispatch_command(text)
+                else:
+                    input_id = str(uuid.uuid4())
+                    self.api.feed(input_id, text)
+                    try:
+                        await self._collect_turn(input_id)
+                    except KeyboardInterrupt, asyncio.CancelledError:
+                        self.api.cancel_current()
+                        self._console.print("[red]Interrupted.[/red]")
 
-    # ── Streaming event loop ──────────────────────────────────────────────────
-
-    async def _event_loop(self) -> None:
-        chat = self.query_one("#chat-area", VerticalScroll)
-
-        async def mount(widget) -> None:
-            await chat.mount(widget)
-            chat.scroll_end(animate=False)
-
-        def reset_response() -> None:
-            self._current_md = None
-            self._response_buf = ""
-            self._last_event_type = None
-
-        def reset_thinking() -> None:
-            self._thinking_md = None
-            self._thinking_buf = ""
-            self._last_event_type = None
-
-        async for event in self.api.stream_events():
-            match event:
-                case UserInputEvent(text=t):
-                    reset_response()
-                    reset_thinking()
-                    await mount(Static(f"[bold]>[/bold] {t}", classes="user-msg"))
-
-                case ThinkingEvent(fragment=f):
-                    if not self._show_thinking:
-                        continue
-                    if self._last_event_type != "thinking":
-                        self._thinking_md = None
-                        self._thinking_buf = ""
-                    self._last_event_type = "thinking"
-                    self._thinking_buf += f
-                    if self._thinking_md is None:
-                        self._thinking_md = Static(self._thinking_buf, classes="thinking")
-                        await mount(self._thinking_md)
-                    else:
-                        self._thinking_md.update(self._thinking_buf)
-                    chat.scroll_end(animate=False)
-
-                case ResponseEvent(fragment=f):
-                    if self._last_event_type != "response":
-                        self._current_md = None
-                        self._response_buf = ""
-                    self._last_event_type = "response"
-                    self._response_buf += f
-                    if self._current_md is None:
-                        self._current_md = Markdown(self._response_buf, classes="response")
-                        await mount(self._current_md)
-                    else:
-                        await self._current_md.update(self._response_buf)
-                    chat.scroll_end(animate=False)
-
-                case ToolStartEvent(tool_name=name, tool_input=inp):
-                    # Reset so the next ResponseEvent mounts after this tool's output
-                    reset_response()
-                    await mount(Static(f"[bold]⏺ {name}[/bold]({_fmt_tool_input(inp)})", classes="tool-call"))
-
-                case ToolOutputEvent(result=result, output_format=fmt):
-                    match fmt:
-                        case "all":
-                            text = result
-                        case "truncate":
-                            if len(result) > MAX_TOOL_OUTPUT:
-                                result = result[:MAX_TOOL_OUTPUT] + "… [truncated]"
-                            text = "\n".join(f"  {line}" for line in result.splitlines())
-                        case _:
-                            continue
-                    await mount(Static(text, classes="tool-output"))
-
-                case ToolErrorEvent(tool_name=name, error=err):
-                    await mount(Static(f"  {name}: {err}", classes="tool-error"))
-
-                case DoneEvent(error=error):
-                    reset_response()
-                    reset_thinking()
-                    if error:
-                        await mount(Static(f"[red]Error: {error}[/red]"))
-                    self._turn_in_progress = False
-                    self._unlock_input()
-
-    # ── Input handling ────────────────────────────────────────────────────────
-
-    def on_input_area_submitted(self, msg: InputArea.Submitted) -> None:
-        text = msg.text
-        if text.startswith("/"):
-            self.run_worker(self._dispatch_command(text), exclusive=False)
-        else:
-            self._history.append(text)
-            self.query_one("#input-area", InputArea).load_history(self._history)
-            self.api.feed(str(uuid.uuid4()), text)
-            self._turn_in_progress = True
-            self._lock_input()
-
-    def on_input_area_text_changed(self, msg: InputArea.TextChanged) -> None:
-        text = msg.text
-        overlay = self.query_one(InputOverlay)
-        if text.startswith("/"):
-            after_slash = text[1:]
-            if " " in after_slash:
-                overlay.hide()
-                return
-            query = after_slash.lower() if after_slash.strip() else ""
-            matches = [(f"/{cmd}", desc) for cmd, desc in _ALL_COMMANDS if cmd.startswith(query)]
-            overlay.show_completions(matches)
-        else:
-            overlay.hide()
-
-    def action_maybe_quit(self) -> None:
-        if self._turn_in_progress:
-            self.api.cancel_current()
-        else:
-            self.exit()
-
-    # ── Schema-driven command dispatch (fully inline, no panels) ──────────────
-
-    async def _dispatch_command(self, text: str) -> None:
-        parts = text[1:].split(maxsplit=1)
+    async def _dispatch_command(self, raw: str) -> None:
+        parts = raw[1:].split(maxsplit=1)
         cmd = parts[0].lower()
         arg = parts[1].strip() if len(parts) > 1 else ""
 
+        if cmd == "quit":
+            raise SystemExit(0)
         if cmd == "help":
             self._show_help()
-            return
-        if cmd == "quit":
-            self.exit()
             return
 
         field_map = {f.name: f for f in FIELDS}
         field = field_map.get(cmd)
         if not field:
-            self._log(f"[yellow]Unknown command /{cmd}. Type /help.[/yellow]")
+            self._console.print(f"[yellow]Unknown command /{cmd}. Type /help.[/yellow]")
             return
 
         match field.menu:
             case ToggleMenu() as m:
                 if arg in ("on", "off"):
                     m.set_current(self, arg == "on")
-                    self._log(f"[dim]/{field.name} → {arg}[/dim]")
-                    return
-                current = "on" if m.get_current(self) else "off"
-                overlay = self.query_one(InputOverlay)
-                await overlay.show_command(
-                    "choice",
-                    ["on", "off"],
-                    current,
-                    False,
-                    lambda v: m.set_current(self, v == "on"),
-                )
+                    self._console.print(f"[dim]/{field.name} → {arg}[/dim]")
+                else:
+                    result = await radiolist_dialog(
+                        title=field.name,
+                        text=field.description,
+                        values=[("on", "on"), ("off", "off")],
+                    ).run_async()
+                    if result is not None:
+                        m.set_current(self, result == "on")
+                        self._console.print(f"[dim]/{field.name} → {result}[/dim]")
 
             case TextInputMenu() as m:
-                if not arg:
+                if arg:
+                    val = None if (m.nullable and arg.lower() == "none") else arg
+                    m.set_current(self, val)
+                    self._console.print(f"[dim]/{field.name} → {val!r}[/dim]")
+                else:
                     current = m.get_current(self)
-                    overlay = self.query_one(InputOverlay)
-                    await overlay.show_command(
-                        "text",
-                        [],
-                        current,
-                        m.nullable,
-                        lambda v: m.set_current(self, None if (m.nullable and v and v.lower() == "none") else v),
-                    )
-                    return
-                val = None if (m.nullable and arg.lower() == "none") else arg
-                m.set_current(self, val)
-                self._log(f"[dim]/{field.name} → {val!r}[/dim]")
+                    result = await input_dialog(
+                        title=field.name,
+                        text=field.description,
+                        default=current or "",
+                    ).run_async()
+                    if result is not None:
+                        val = None if (m.nullable and result.lower() == "none") else result
+                        m.set_current(self, val)
+                        self._console.print(f"[dim]/{field.name} → {val!r}[/dim]")
 
             case DialogueMenu() as m:
                 if arg:
                     m.set_current(self, arg)
-                    self._log(f"[dim]/{field.name} → {arg}[/dim]")
-                    return
-                choices = await resolve_choices(m.choices, self)
-                current = m.get_current(self)
-                overlay = self.query_one(InputOverlay)
-
-                if field.name == "provider":
-
-                    def provider_callback(v: str) -> None:
-                        if v == CUSTOM_PROVIDER_LABEL:
-                            self.run_worker(
-                                self._show_custom_provider_input(overlay, m),
-                                exclusive=False,
-                            )
-                        else:
-                            m.set_current(self, v)
-
-                    await overlay.show_command("choice", choices, current, False, provider_callback)
+                    self._console.print(f"[dim]/{field.name} → {arg}[/dim]")
                 else:
-                    await overlay.show_command(
-                        "choice",
-                        choices,
-                        current,
-                        False,
-                        lambda v: m.set_current(self, v),
-                    )
+                    choices = await resolve_choices(m.choices, self)
+                    result = await radiolist_dialog(
+                        title=field.name,
+                        text=field.description,
+                        values=[(c, c) for c in choices],
+                    ).run_async()
+                    if result == CUSTOM_PROVIDER_LABEL:
+                        url = await input_dialog(
+                            title="Custom provider URL",
+                            text="Enter OpenAI-compatible base URL (host:port):",
+                        ).run_async()
+                        if url:
+                            m.set_current(self, url)
+                            self._console.print(f"[dim]/{field.name} → {url!r}[/dim]")
+                    elif result is not None:
+                        m.set_current(self, result)
+                        self._console.print(f"[dim]/{field.name} → {result}[/dim]")
 
             case MultiSelectMenu() as m:
                 if arg:
                     selected = [s.strip() for s in arg.replace(",", " ").split() if s.strip()]
                     m.set_current(self, selected)
-                    self._log(f"[dim]/{field.name} → {selected}[/dim]")
-                    return
-                choices = await resolve_choices(m.choices, self)
-                current = list(m.get_current(self) or [])
-                overlay = self.query_one(InputOverlay)
-                await overlay.show_command(
-                    "multiselect",
-                    choices,
-                    current,
-                    False,
-                    lambda v: m.set_current(self, v),
-                )
+                    self._console.print(f"[dim]/{field.name} → {selected}[/dim]")
+                else:
+                    choices = await resolve_choices(m.choices, self)
+                    current = list(m.get_current(self) or [])
+                    result = await checkboxlist_dialog(
+                        title=field.name,
+                        text=field.description,
+                        values=[(c, c) for c in choices],
+                        default_values=current,
+                    ).run_async()
+                    if result is not None:
+                        m.set_current(self, result)
+                        self._console.print(f"[dim]/{field.name} → {result}[/dim]")
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    async def _collect_turn(self, _input_id: str) -> None:
+        response_buf = ""
+        live: Live | None = None
+        last_update = 0.0
+        prev_event: Event | None = None
 
-    async def _show_custom_provider_input(self, overlay: InputOverlay, menu: DialogueMenu) -> None:
-        """Show text input for custom provider URL after user selects 'Custom...'."""
-        current = menu.get_current(self)
-        await overlay.show_command(
-            "text",
-            [],
-            current,
-            False,
-            lambda url: menu.set_current(self, url),
-        )
+        def start_new_block(event):
+            if (
+                prev_event is not None
+                and not isinstance(prev_event, UserInputEvent)
+                and not isinstance(event, type(prev_event))
+            ):
+                self._console.print("\n")
 
-    def _lock_input(self) -> None:
-        self.query_one("#input-area", InputArea).disabled = True
+        async for event in self.api.stream_events():
+            match event:
+                case UserInputEvent(text=t):
+                    pass  # Don't re print user text back to screen
+                    # self._console.print(f"[bold]>[/bold] {t}")
 
-    def _unlock_input(self) -> None:
-        inp = self.query_one("#input-area", InputArea)
-        inp.disabled = False
-        inp.focus()
+                case ThinkingEvent(fragment=f):
+                    start_new_block(event)
 
-    def _log(self, msg: str) -> None:
-        chat = self.query_one("#chat-area", VerticalScroll)
-        widget = Static(msg)
-        self.run_worker(chat.mount(widget), exclusive=False)
-        chat.scroll_end(animate=False)
+                    if self._show_thinking:
+                        self._console.print(f, style="dim italic", end="")
+
+                case ResponseEvent(fragment=f):
+                    start_new_block(event)
+
+                    response_buf += f
+                    now = time.monotonic()
+                    if live is None:
+                        live = Live(
+                            Markdown(response_buf),
+                            console=self._console,
+                            auto_refresh=False,
+                        )
+                        live.start()
+                        last_update = now
+                    elif now - last_update >= UPDATE_INTERVAL:
+                        live.update(Markdown(response_buf))
+                        last_update = now
+
+                case ToolStartEvent(tool_name=name, tool_input=inp):
+                    start_new_block(event)
+
+                    if live is not None:
+                        live.update(Markdown(response_buf))
+                        live.stop()
+                        live = None
+                        response_buf = ""
+                    self._console.print(f"[blue bold]⏺ {name}[/blue bold]({_fmt_tool_input(inp)})")
+
+                case ToolOutputEvent(result=result, output_format=fmt):
+                    match fmt:
+                        case "all":
+                            self._console.print(result, style="cyan dim")
+                        case "truncate":
+                            if len(result) > MAX_TOOL_OUTPUT:
+                                result = result[:MAX_TOOL_OUTPUT] + "… [truncated]"
+                            indented = "\n".join(f"  {line}" for line in result.splitlines())
+                            self._console.print(indented, style="cyan dim")
+
+                case ToolErrorEvent(tool_name=name, error=err):
+                    self._console.print(f"  {name}: {err}", style="red")
+
+                case DoneEvent(error=error):
+                    if live is not None:
+                        live.update(Markdown(response_buf))
+                        live.stop()
+                        live = None
+                    if error:
+                        self._console.print(f"[red]Error: {error}[/red]")
+                    break
+
+            prev_event = event
+
+        self._console.print()
 
     def _show_help(self) -> None:
         lines = ["[bold underline]Commands[/bold underline]"]
@@ -350,15 +302,11 @@ class ChatApp(App):
             lines.append(f"  [cyan]/{field.name}[/cyan]  {field.description}  [dim]{usage}[/dim]")
         lines.append("  [cyan]/help[/cyan]  Show this message")
         lines.append("  [cyan]/quit[/cyan]  Exit")
-        self._log("\n".join(lines))
+        self._console.print("\n".join(lines))
 
-    def run_app(self) -> None:
-        async def _run() -> None:
-            async with self.api:
-                # The issue with inline mode is that there are white borders around
-                await self.run_async()
-
-        asyncio.run(_run())
+    def _print_header(self) -> None:
+        self._console.rule("[bold]LocalAI[/bold]")
+        self._console.print("[dim]Ctrl+C or Ctrl+D to quit · /help for commands[/dim]\n")
 
 
 def cli() -> None:
@@ -407,4 +355,4 @@ def cli() -> None:
         system_prompt=system_prompt,
         system_prompt_path=cfg.system_prompt_path,
     )
-    ChatApp(api=api, show_think=cfg.show_think).run_app()
+    ChatFrontend(api=api, show_think=cfg.show_think).run()
