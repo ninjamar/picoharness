@@ -9,7 +9,9 @@ dependencies = [
     "ollama>=0.6.1",
     "openai>=2.32.0",
     "prompt-toolkit>=3.0.52",
-    "rich>=13.0",
+    "pydantic>=2.13.2",
+    "rich>=15.0.0",
+    "tomlkit>=0.11",
     "wikipedia-api>=0.7",
 ]
 [dependency-groups]
