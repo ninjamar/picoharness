@@ -85,7 +85,7 @@ class BackendAPI:
     def feed(self, input_id: str, text: str) -> None:
         self._backend.feed(input_id, text)
 
-    async def stream_events(self) -> AsyncGenerator[Event, None]:
+    async def stream_events(self) -> AsyncGenerator[Event]:
         async for event in self._backend.stream_events():
             yield event
 

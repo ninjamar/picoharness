@@ -104,7 +104,7 @@ class Backend:
             system_prompt_path=api._system_prompt_path,
         )
 
-    async def __aenter__(self) -> "Backend":
+    async def __aenter__(self) -> Backend:
         init_tasks = [asyncio.create_task(self._init_tool(cls)) for cls in self._tool_classes]
         self._tool_instances = list(await asyncio.gather(*init_tasks))
         self._process_task = asyncio.create_task(self._process_loop())
@@ -135,7 +135,7 @@ class Backend:
             self._current_turn_task.cancel()
         await self._input_queue.put(_InputSentinel())
 
-    async def stream_events(self) -> AsyncGenerator[Event, None]:
+    async def stream_events(self) -> AsyncGenerator[Event]:
         while True:
             item = await self._event_queue.get()
             if item is _SENTINEL:

@@ -1,6 +1,7 @@
 import json
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator
+from typing import Any
 
 import ollama
 from openai import AsyncOpenAI
@@ -42,9 +43,7 @@ class BaseProvider:
     def __init__(self) -> None:
         self.tool_schemas = []
 
-    async def chat(
-        self, model: str, messages: list[dict[str, Any]], think: bool
-    ) -> AsyncGenerator[_ChatResponse, None]:
+    async def chat(self, model: str, messages: list[dict[str, Any]], think: bool) -> AsyncGenerator[_ChatResponse]:
         raise NotImplementedError
         yield  # Need to satisfy AsyncGenerator type annotation
 
@@ -68,9 +67,7 @@ class OllamaProvider(BaseProvider):
         super().__init__()
         self.client = ollama.AsyncClient()
 
-    async def chat(
-        self, model: str, messages: list[dict[str, Any]], think: bool
-    ) -> AsyncGenerator[_ChatResponse, None]:
+    async def chat(self, model: str, messages: list[dict[str, Any]], think: bool) -> AsyncGenerator[_ChatResponse]:
 
         assert self.tool_schemas is not None
 
@@ -110,9 +107,7 @@ class OpenAICompatibleProvider(BaseProvider):
         super().__init__()
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
-    async def chat(
-        self, model: str, messages: list[dict[str, Any]], think: bool
-    ) -> AsyncGenerator[_ChatResponse, None]:
+    async def chat(self, model: str, messages: list[dict[str, Any]], think: bool) -> AsyncGenerator[_ChatResponse]:
 
         serialized_messages = []
         for message in messages:
