@@ -8,22 +8,18 @@ dependencies = [
     "aiohttp>=3.13.5",
     "ollama>=0.6.1",
     "openai>=2.32.0",
-    "prompt-toolkit>=3.0.52",
     "pydantic>=2.13.2",
-    "questionary>=2.1.1",
-    "rich>=15.0.0",
+    "textual>=8.2.7",
     "tomlkit>=0.11",
     "wikipedia-api>=0.7",
 ]
 [dependency-groups]
 dev = [
     "isort>=8.0.1",
-    "pyright>=1.1.409",
     "ruff>=0.15.10",
     "ty>=0.0.29",
     "pytest>=8.0",
     "pytest-asyncio>=0.25",
-    "line-profiler>=5.0.2",
 ]
 
 [tool.ruff]

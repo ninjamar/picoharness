@@ -11,13 +11,25 @@ Screen {
     scrollbar-visibility: hidden;
 }
 
+#input-line {
+    height: auto;
+    layout: horizontal;
+    border-top: solid $border;
+}
+
+#input-prompt {
+    width: auto;
+    padding: 0 0 0 2;
+    color: $accent;
+}
+
 #input-area {
+    width: 1fr;
     display: block;
     height: auto;
     background: $background;
     border: none;
-    border-top: solid $border;
-    padding: 0 2;
+    padding: 0 1 0 1;
     scrollbar-visibility: hidden;
 }
 
