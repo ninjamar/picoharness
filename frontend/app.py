@@ -8,7 +8,7 @@ from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import NestedCompleter
-from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.shortcuts import checkboxlist_dialog, input_dialog, radiolist_dialog
 from rich.console import Console
 from rich.live import Live
@@ -71,6 +71,17 @@ def _build_key_bindings() -> KeyBindings:
             event.app.exit(exception=KeyboardInterrupt())
 
     return kb
+
+
+async def _run_dialog(app):
+    kb = KeyBindings()
+
+    @kb.add("escape")
+    def _(event) -> None:
+        event.app.exit(result=None)
+
+    app.key_bindings = merge_key_bindings([app.key_bindings, kb])
+    return await app.run_async()
 
 
 class ChatFrontend:
@@ -140,11 +151,13 @@ class ChatFrontend:
                     m.set_current(self, arg == "on")
                     self._console.print(f"[dim]/{field.name} → {arg}[/dim]")
                 else:
-                    result = await radiolist_dialog(
-                        title=field.name,
-                        text=field.description,
-                        values=[("on", "on"), ("off", "off")],
-                    ).run_async()
+                    result = await _run_dialog(
+                        radiolist_dialog(
+                            title=field.name,
+                            text=field.description,
+                            values=[("on", "on"), ("off", "off")],
+                        )
+                    )
                     if result is not None:
                         m.set_current(self, result == "on")
                         self._console.print(f"[dim]/{field.name} → {result}[/dim]")
@@ -156,11 +169,13 @@ class ChatFrontend:
                     self._console.print(f"[dim]/{field.name} → {val!r}[/dim]")
                 else:
                     current = m.get_current(self)
-                    result = await input_dialog(
-                        title=field.name,
-                        text=field.description,
-                        default=current or "",
-                    ).run_async()
+                    result = await _run_dialog(
+                        input_dialog(
+                            title=field.name,
+                            text=field.description,
+                            default=current or "",
+                        )
+                    )
                     if result is not None:
                         val = None if (m.nullable and result.lower() == "none") else result
                         m.set_current(self, val)
@@ -172,16 +187,20 @@ class ChatFrontend:
                     self._console.print(f"[dim]/{field.name} → {arg}[/dim]")
                 else:
                     choices = await resolve_choices(m.choices, self)
-                    result = await radiolist_dialog(
-                        title=field.name,
-                        text=field.description,
-                        values=[(c, c) for c in choices],
-                    ).run_async()
+                    result = await _run_dialog(
+                        radiolist_dialog(
+                            title=field.name,
+                            text=field.description,
+                            values=[(c, c) for c in choices],
+                        )
+                    )
                     if result == CUSTOM_PROVIDER_LABEL:
-                        url = await input_dialog(
-                            title="Custom provider URL",
-                            text="Enter OpenAI-compatible base URL (host:port):",
-                        ).run_async()
+                        url = await _run_dialog(
+                            input_dialog(
+                                title="Custom provider URL",
+                                text="Enter OpenAI-compatible base URL (host:port):",
+                            )
+                        )
                         if url:
                             m.set_current(self, url)
                             self._console.print(f"[dim]/{field.name} → {url!r}[/dim]")
@@ -197,12 +216,14 @@ class ChatFrontend:
                 else:
                     choices = await resolve_choices(m.choices, self)
                     current = list(m.get_current(self) or [])
-                    result = await checkboxlist_dialog(
-                        title=field.name,
-                        text=field.description,
-                        values=[(c, c) for c in choices],
-                        default_values=current,
-                    ).run_async()
+                    result = await _run_dialog(
+                        checkboxlist_dialog(
+                            title=field.name,
+                            text=field.description,
+                            values=[(c, c) for c in choices],
+                            default_values=current,
+                        )
+                    )
                     if result is not None:
                         m.set_current(self, result)
                         self._console.print(f"[dim]/{field.name} → {result}[/dim]")
