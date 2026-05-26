@@ -71,6 +71,7 @@ class ChatApp(App):
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
         yield VerticalScroll(id="chat-area")
+
         with InputOverlay(id="input-overlay"):
             yield CompletionMenu(id="completion")
             yield CommandPanel(id="command-panel")
