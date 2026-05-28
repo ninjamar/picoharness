@@ -75,6 +75,7 @@ class Backend:
         self._model = model
         self._think = think
         self._system_prompt_path = system_prompt_path
+
         self._enabled_tools_override: list[str] = []
         self._tool_classes: list[type[BaseTool]] = tools or []
         self._tool_schemas = [tool.to_schema() for tool in self._tool_classes]
@@ -96,12 +97,12 @@ class Backend:
     @classmethod
     def from_config(cls, api: BackendAPI) -> Backend:
         return cls(
-            provider=api._provider,
-            model=api._model,
-            think=api._think,
-            tools=api._tool_classes,
-            system_prompt=api._system_prompt,
-            system_prompt_path=api._system_prompt_path,
+            provider=api.provider,
+            model=api.model,
+            think=api.think,
+            tools=api.tool_classes,
+            system_prompt=api.system_prompt,
+            system_prompt_path=api.system_prompt_path,
         )
 
     async def __aenter__(self) -> Backend:

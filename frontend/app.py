@@ -501,7 +501,7 @@ def cli() -> None:
 
     tool_name_map: dict[str, type] = {tool.name: tool for tool in ALL_TOOLS}
     tools = []
-    tool_names = cfg.enabled_tools if cfg.enabled_tools else list(tool_name_map.keys())
+    tool_names = cfg.tools if cfg.tools else list(tool_name_map.keys())
     for name in tool_names:
         if name not in tool_name_map:
             raise SystemExit(f"Unknown tool '{name}'. Valid: {list(tool_name_map.keys())}")
@@ -520,6 +520,7 @@ def cli() -> None:
         provider=provider,
         model=cfg.model,
         think=cfg.think,
+        context_length=cfg.context_length,
         tool_classes=tools,
         system_prompt=system_prompt,
         system_prompt_path=cfg.system_prompt_path,

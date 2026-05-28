@@ -60,7 +60,7 @@ async def _fetch_models(app: ChatApp) -> list[str]:
     return [m.name for m in model_infos]
 
 
-def _get_enabled_tools(app: ChatApp) -> list[str]:
+def _get_all_tools(app: ChatApp) -> list[str]:
     return app.api.get_all_tools()
 
 
@@ -93,7 +93,7 @@ FIELDS: list[FieldDef] = [
         default="ollama",
         description="Provider: 'ollama' or an OpenAI-compatible base URL",
         menu=DialogueMenu(
-            get_current=lambda f: f.api.provider,
+            get_current=lambda f: f.api.get_provider_type(),
             set_current=_set_provider,
             choices=lambda f: ["ollama", CUSTOM_PROVIDER_LABEL],
         ),
@@ -130,14 +130,23 @@ FIELDS: list[FieldDef] = [
         ),
     ),
     FieldDef(
-        name="enabled_tools",
+        name="tools",
         type=list,
         default=[],
         description="Tools available to the model",
         menu=MultiSelectMenu(
-            get_current=lambda f: f.api.enabled_tools,
+            get_current=lambda f: f.api.get_enabled_tools(),
             set_current=lambda f, v: f.api.set_enabled_tools(v),
-            choices=_get_enabled_tools,
+            choices=_get_all_tools,
+        ),
+    ),
+    FieldDef(
+        name="context_length",
+        type=int,
+        default=4096,
+        description="Context window length of the model (higher number increases RAM usage)",
+        menu=TextInputMenu(
+            get_current=lambda f: f.api.context_length, set_current=lambda f, v: f.api.set_context_length(v)
         ),
     ),
 ]
