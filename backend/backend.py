@@ -21,6 +21,7 @@ from backend.events import (
     UserInputEvent,
 )
 from backend.provider import BaseProvider
+from backend.system_prompt import format_system_prompt
 from backend.tools import BaseTool
 
 _SENTINEL = object()
@@ -34,30 +35,6 @@ class _InputSentinel:
 
 
 ToolExecutionResult = namedtuple("ToolExecutionResult", ["result", "error", "output_format"])
-
-
-def _get_tool_info(tool_classes: list[type[BaseTool]]) -> str:
-    info = []
-    for tool in tool_classes:
-        sig = inspect.signature(tool.execute)
-
-        params = dict(sig.parameters)
-        params.pop("self", None)
-        clean_sig = sig.replace(parameters=list(params.values()))
-
-        docstring = inspect.getdoc(tool.execute) or ""
-        name = tool.name
-
-        indented_doc = "\n".join(f"    {line}" for line in docstring.splitlines())
-        info.append(f"- {name}{clean_sig}\n{indented_doc}")
-        # info.append(f"{name}{clean_sig}\n{docstring}")
-
-    return "\n".join(info)
-
-
-def _format_system_prompt(prompt: str, tool_classes: list[type[BaseTool]]) -> str:
-    # TODO: Use actual templating engine. pass info like date...
-    return prompt.replace("{{tools}}", _get_tool_info(tool_classes))
 
 
 class Backend:
@@ -86,9 +63,8 @@ class Backend:
         self._messages: list[dict[str, Any]] = (
             []
             if system_prompt is None
-            else [{"role": "system", "content": _format_system_prompt(system_prompt, self._tool_classes)}]
+            else [{"role": "system", "content": format_system_prompt(system_prompt, self._tool_classes)}]
         )
-        # print(_format_system_prompt(system_prompt, self._tool_classes))
         self._input_queue: asyncio.Queue[tuple[str, str] | _InputSentinel] = asyncio.Queue()
         self._event_queue: asyncio.Queue[Event | _InputSentinel] = asyncio.Queue()
         self._process_task: asyncio.Task | None = None
