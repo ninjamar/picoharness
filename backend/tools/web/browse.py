@@ -4,6 +4,9 @@ from backend.tools.base import BaseTool
 
 from ._client import fetch_page, fetch_search_results
 
+_DEFAULT_SEARXNG_URL = "http://localhost:4000"
+_DEFAULT_JINA_READER_URL = "http://localhost:3001"
+
 
 class ReadWebPage(BaseTool):
     """Tool to read a webpage as markdown"""
@@ -11,6 +14,9 @@ class ReadWebPage(BaseTool):
     name = "read_webpage"
 
     output_format = "none"
+
+    def __init__(self, jina_reader_url: str = _DEFAULT_JINA_READER_URL, **kwargs: object) -> None:
+        self.jina_reader_url = jina_reader_url
 
     async def _call(self, url: str) -> str:
         """
@@ -22,7 +28,7 @@ class ReadWebPage(BaseTool):
         Returns:
             The contents of the webpage, as markdown
         """
-        return await fetch_page(url)
+        return await fetch_page(url, self.jina_reader_url)
 
 
 class SearchWeb(BaseTool):
@@ -31,6 +37,9 @@ class SearchWeb(BaseTool):
     name = "search_web"
 
     output_format = "all"
+
+    def __init__(self, searxng_url: str = _DEFAULT_SEARXNG_URL, **kwargs: object) -> None:
+        self.searxng_url = searxng_url
 
     async def _call(self, query: str, num_results: int = 5) -> str:
         """
@@ -43,7 +52,7 @@ class SearchWeb(BaseTool):
         Returns:
             A numbered list of results with format "N. Title: URL"
         """
-        results = await fetch_search_results(query, num_results)
+        results = await fetch_search_results(query, num_results, self.searxng_url)
         if not results:
             return ""
         lines = [f"{i + 1}. {r['title']}: {r['url']}" for i, r in enumerate(results)]
@@ -57,6 +66,15 @@ class SearchAndReadWeb(BaseTool):
 
     output_format = "none"
 
+    def __init__(
+        self,
+        searxng_url: str = _DEFAULT_SEARXNG_URL,
+        jina_reader_url: str = _DEFAULT_JINA_READER_URL,
+        **kwargs: object,
+    ) -> None:
+        self.searxng_url = searxng_url
+        self.jina_reader_url = jina_reader_url
+
     async def _call(self, query: str, num_results: int = 3) -> str:
         """
         Search the web for a query and read the contents of top results.
@@ -68,11 +86,11 @@ class SearchAndReadWeb(BaseTool):
         Returns:
             Combined markdown content from all fetched pages, with each page under a heading
         """
-        results = await fetch_search_results(query, num_results)
+        results = await fetch_search_results(query, num_results, self.searxng_url)
 
         async def _read_one(url: str) -> tuple[str, str]:
             try:
-                content = await fetch_page(url, truncate=500)
+                content = await fetch_page(url, self.jina_reader_url, truncate=500)
                 return url, content
             except Exception as exc:
                 return url, f"Error reading page: {exc}"

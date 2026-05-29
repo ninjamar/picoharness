@@ -149,4 +149,24 @@ FIELDS: list[FieldDef] = [
             get_current=lambda f: f.api.context_length, set_current=lambda f, v: f.api.set_context_length(v)
         ),
     ),
+    FieldDef(
+        name="searxng_url",
+        type=str,
+        default="http://localhost:4000",
+        description="Base URL of the SearXNG search service",
+        menu=TextInputMenu(
+            get_current=lambda f: f.api.searxng_url,
+            set_current=lambda f, v: f.api.set_searxng_url(v),
+        ),
+    ),
+    FieldDef(
+        name="jina_reader_url",
+        type=str,
+        default="http://localhost:3001",
+        description="Base URL of the Jina Reader service",
+        menu=TextInputMenu(
+            get_current=lambda f: f.api.jina_reader_url,
+            set_current=lambda f, v: f.api.set_jina_reader_url(v),
+        ),
+    ),
 ]

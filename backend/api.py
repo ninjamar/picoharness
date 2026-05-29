@@ -52,9 +52,11 @@ class BackendAPI:
     system_prompt: str | None
     system_prompt_path: str | None
 
+    searxng_url: str = "http://localhost:4000"
+    jina_reader_url: str = "http://localhost:3001"
+
     _backend: Backend = field(init=False)
 
-    # TODO: Investigate default
     def __post_init__(self):
         self._backend = Backend.from_config(self)
 
@@ -93,6 +95,16 @@ class BackendAPI:
         self.system_prompt_path = value
         self._backend._system_prompt_path = value
 
+    def set_searxng_url(self, value: str) -> None:
+        self.searxng_url = value
+        self._backend._tool_config.searxng_url = value
+        self._backend._reinstantiate_tools()
+
+    def set_jina_reader_url(self, value: str) -> None:
+        self.jina_reader_url = value
+        self._backend._tool_config.jina_reader_url = value
+        self._backend._reinstantiate_tools()
+
     def set_enabled_tools(self, value: list[str]) -> None:
         if value == ["*"]:
             new_classes = list(ALL_TOOLS)
@@ -101,7 +113,7 @@ class BackendAPI:
             new_classes = [name_map[n] for n in value if n in name_map]
         self.tool_classes = new_classes
         self._backend._tool_classes = new_classes
-        self._backend._tool_instances = [cls() for cls in new_classes]
+        self._backend._reinstantiate_tools()
         self._backend._tool_schemas = [cls.to_schema() for cls in new_classes]
         self.provider.tool_schemas = self._backend._tool_schemas
 

@@ -5,6 +5,7 @@ import inspect
 import uuid
 from collections import namedtuple
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -23,6 +24,13 @@ from backend.events import (
 from backend.provider import BaseProvider
 from backend.system_prompt import format_system_prompt
 from backend.tools import BaseTool
+
+
+@dataclass
+class _ToolConfig:
+    searxng_url: str = "http://localhost:4000"
+    jina_reader_url: str = "http://localhost:3001"
+
 
 _SENTINEL = object()
 
@@ -47,11 +55,14 @@ class Backend:
         tools: list[type[BaseTool]] | None = None,
         system_prompt: str | None = None,
         system_prompt_path: str | None = None,
+        searxng_url: str = "http://localhost:4000",
+        jina_reader_url: str = "http://localhost:3001",
     ) -> None:
         self._provider = provider
         self._model = model
         self._think = think
         self._system_prompt_path = system_prompt_path
+        self._tool_config = _ToolConfig(searxng_url=searxng_url, jina_reader_url=jina_reader_url)
 
         self._enabled_tools_override: list[str] = []
         self._tool_classes: list[type[BaseTool]] = tools or []
@@ -79,10 +90,12 @@ class Backend:
             tools=api.tool_classes,
             system_prompt=api.system_prompt,
             system_prompt_path=api.system_prompt_path,
+            searxng_url=api.searxng_url,
+            jina_reader_url=api.jina_reader_url,
         )
 
     async def __aenter__(self) -> Backend:
-        init_tasks = [asyncio.create_task(self._init_tool(cls)) for cls in self._tool_classes]
+        init_tasks = [asyncio.create_task(self._init_tool(cls, self._tool_config)) for cls in self._tool_classes]
         self._tool_instances = list(await asyncio.gather(*init_tasks))
         self._process_task = asyncio.create_task(self._process_loop())
         return self
@@ -97,8 +110,20 @@ class Backend:
         await self._event_queue.put(_SENTINEL)  # type: ignore
 
     @staticmethod
-    async def _init_tool(tool_cls: type[BaseTool]) -> BaseTool:
-        return tool_cls()
+    async def _init_tool(tool_cls: type[BaseTool], config: _ToolConfig) -> BaseTool:
+        import dataclasses
+
+        return tool_cls(**dataclasses.asdict(config))
+
+    def _reinstantiate_tools(self) -> None:
+        async def _do_instantiate() -> None:
+            init_tasks = [asyncio.create_task(self._init_tool(cls, self._tool_config)) for cls in self._tool_classes]
+            self._tool_instances = list(await asyncio.gather(*init_tasks))
+
+        try:
+            asyncio.create_task(_do_instantiate())
+        except RuntimeError:
+            pass
 
     def feed(self, input_id: str, text: str) -> None:
         self._input_queue.put_nowait((input_id, text))
@@ -198,7 +223,7 @@ class Backend:
                 for coro in asyncio.as_completed(tasks):
                     tool_id, name, output, error, output_format = await coro
                     if error:
-                        results[tool_id] = ""
+                        results[tool_id] = f"Error: {error}"
                         await self._event_queue.put(
                             ToolErrorEvent(id=input_id, tool_id=tool_id, tool_name=name, error=error)
                         )
@@ -247,5 +272,7 @@ class Backend:
                     result = await instance.execute(**args)
                     return ToolExecutionResult(result=result, error=None, output_format=instance.output_format)
                 except Exception as exc:
-                    return ToolExecutionResult(result=None, error=str(exc), output_format=None)
+                    return ToolExecutionResult(
+                        result=None, error=f"{exc.__class__.__name__}: {str(exc)}", output_format=None
+                    )
         return ToolExecutionResult(result=None, error=f"Unknown tool: {name}", output_format=None)

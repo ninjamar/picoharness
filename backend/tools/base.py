@@ -71,7 +71,7 @@ class BaseTool:
     name: str = ""
     output_format: Literal["all", "truncate", "none"]
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         pass
 
     @classmethod
