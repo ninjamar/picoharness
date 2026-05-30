@@ -26,6 +26,7 @@ from frontend.config_io import generate_config, load_config
 from frontend.schema import (
     CUSTOM_PROVIDER_LABEL,
     FIELDS,
+    FIELDS_SHOW_UI,
     DialogueMenu,
     MultiSelectMenu,
     TextInputMenu,
@@ -94,7 +95,7 @@ class ChatApp(App):
 
         # Populate the completion menu with all commands
         completion_menu = self.query_one("#completion", CompletionMenu)
-        all_commands = [(f"/{f.name}", f.description) for f in FIELDS]
+        all_commands = [(f"/{f.name}", f.description) for f in FIELDS_SHOW_UI]
         all_commands += [("/help", "Show help"), ("/quit", "Exit")]
         completion_menu.set_commands(all_commands)
 
@@ -221,7 +222,7 @@ class ChatApp(App):
             self._show_help()
             return
 
-        field_map = {f.name: f for f in FIELDS}
+        field_map = {f.name: f for f in FIELDS_SHOW_UI}
         field = field_map.get(cmd)
         if not field:
             self._print_warning(f"Unknown command /{cmd}. Type /help.")
@@ -443,7 +444,7 @@ class ChatApp(App):
         """Display help message."""
         chat_area = self.query_one("#chat-area", VerticalScroll)
         lines = ["[bold underline]Commands[/bold underline]"]
-        for field in FIELDS:
+        for field in FIELDS_SHOW_UI:
             menu = field.menu
             if isinstance(menu, ToggleMenu):
                 usage = f"/{field.name} on|off"

@@ -44,6 +44,7 @@ class FieldDef:
     default: Any
     description: str
     menu: BaseMenu
+    show: bool = True
 
 
 async def resolve_choices(choices: Any, app: ChatApp) -> list:
@@ -86,6 +87,7 @@ FIELDS: list[FieldDef] = [
             set_current=lambda f, v: f.api.set_model(v),
             choices=_fetch_models,
         ),
+        show=True,
     ),
     FieldDef(
         name="provider",
@@ -97,6 +99,7 @@ FIELDS: list[FieldDef] = [
             set_current=_set_provider,
             choices=lambda f: ["ollama", CUSTOM_PROVIDER_LABEL],
         ),
+        show=False,
     ),
     FieldDef(
         name="think",
@@ -107,6 +110,7 @@ FIELDS: list[FieldDef] = [
             get_current=lambda f: f.api.think,
             set_current=lambda f, v: f.api.set_think(True if v == "on" else False),
         ),
+        show=True,
     ),
     FieldDef(
         name="show_think",
@@ -117,6 +121,7 @@ FIELDS: list[FieldDef] = [
             get_current=lambda f: f.show_think,
             set_current=lambda f, v: f.set_show_think(True if v == "on" else False),
         ),
+        show=True,
     ),
     FieldDef(
         name="system_prompt_path",
@@ -128,6 +133,7 @@ FIELDS: list[FieldDef] = [
             set_current=lambda f, v: f.api.set_system_prompt_path(v),
             nullable=True,
         ),
+        show=False,
     ),
     FieldDef(
         name="tools",
@@ -139,6 +145,7 @@ FIELDS: list[FieldDef] = [
             set_current=lambda f, v: f.api.set_enabled_tools(v),
             choices=_get_all_tools,
         ),
+        show=True,
     ),
     FieldDef(
         name="context_length",
@@ -148,6 +155,7 @@ FIELDS: list[FieldDef] = [
         menu=TextInputMenu(
             get_current=lambda f: f.api.context_length, set_current=lambda f, v: f.api.set_context_length(v)
         ),
+        show=False,
     ),
     FieldDef(
         name="searxng_url",
@@ -158,6 +166,7 @@ FIELDS: list[FieldDef] = [
             get_current=lambda f: f.api.searxng_url,
             set_current=lambda f, v: f.api.set_searxng_url(v),
         ),
+        show=False,
     ),
     FieldDef(
         name="jina_reader_url",
@@ -168,5 +177,8 @@ FIELDS: list[FieldDef] = [
             get_current=lambda f: f.api.jina_reader_url,
             set_current=lambda f, v: f.api.set_jina_reader_url(v),
         ),
+        show=False,
     ),
 ]
+
+FIELDS_SHOW_UI = [f for f in FIELDS if f.show]
