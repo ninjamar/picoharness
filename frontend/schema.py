@@ -45,6 +45,8 @@ class FieldDef:
     description: str
     menu: BaseMenu
     show: bool = True
+    config_comment: str | None = None
+    commented_by_default: bool = False
 
 
 async def resolve_choices(choices: Any, app: ChatApp) -> list:
@@ -162,6 +164,8 @@ FIELDS: list[FieldDef] = [
         type=str,
         default="http://localhost:4000",
         description="Base URL of the SearXNG search service",
+        config_comment="Uncomment this value if the docker service for the search is running. Or use a public SearXNG instance (that supports a json api)",
+        commented_by_default=True,
         menu=TextInputMenu(
             get_current=lambda f: f.api.searxng_url,
             set_current=lambda f, v: f.api.set_searxng_url(v),
@@ -173,6 +177,8 @@ FIELDS: list[FieldDef] = [
         type=str,
         default="http://localhost:3001",
         description="Base URL of the Jina Reader service",
+        config_comment="Uncomment this value if the docker service for the reader is running. Or use a public Jina Reader endpoint (https://r.jina.ai)",
+        commented_by_default=True,
         menu=TextInputMenu(
             get_current=lambda f: f.api.jina_reader_url,
             set_current=lambda f, v: f.api.set_jina_reader_url(v),
