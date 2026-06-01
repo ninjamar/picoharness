@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -25,7 +26,6 @@ from backend.provider import OllamaProvider, OpenAICompatibleProvider
 from frontend.config_io import generate_config, load_config
 from frontend.schema import (
     CUSTOM_PROVIDER_LABEL,
-    FIELDS,
     FIELDS_SHOW_UI,
     DialogueMenu,
     MultiSelectMenu,
@@ -33,6 +33,7 @@ from frontend.schema import (
     ToggleMenu,
     resolve_choices,
 )
+from frontend.services_cmd import services_main
 from frontend.widgets import CommandPanel, CompletionMenu, InputArea
 
 MAX_TOOL_OUTPUT = 500
@@ -113,22 +114,22 @@ class ChatApp(App):
         input_area = self.query_one("#input-area", InputArea)
         if self._generating:
             self.api.cancel_current()
-            self._print_dim_feedback("Cancelled (Ctrl+C again to exit)")
+            self._print_system_feedback("Cancelled (Ctrl+C again to exit)")
             self._last_ctrlc_time = 0.0
         elif input_area.text.strip():
             input_area.text = ""
             input_area._history_index = None
             input_area._saved_input = ""
-            self._print_dim_feedback("Input cleared (Ctrl+C again to exit)")
+            self._print_system_feedback("Input cleared (Ctrl+C again to exit)")
             self._last_ctrlc_time = 0.0
         else:
             now = time.time()
             if now - self._last_ctrlc_time <= 2.0:
-                self._print_dim_feedback("Exiting…")
+                self._print_system_feedback("Exiting…")
                 self.exit()
             else:
                 self._last_ctrlc_time = now
-                self._print_dim_feedback("Press Ctrl+C again to exit")
+                self._print_system_feedback("Press Ctrl+C again to exit")
 
     def on_input_area_submitted(self, msg: InputArea.Submitted) -> None:
         """Handle text submission from input area."""
@@ -310,6 +311,7 @@ class ChatApp(App):
                 case ThinkingEvent(fragment=fragment):
                     if not self._generating:
                         self._generating = True
+                        self.sub_title = "generating…"
                     if self.show_think:
                         self._thinking_buf += fragment
                         if self._thinking_md is None:
@@ -327,6 +329,7 @@ class ChatApp(App):
                 case ResponseEvent(fragment=fragment):
                     if not self._generating:
                         self._generating = True
+                        self.sub_title = "generating…"
                     # Reset thinking if transitioning from thinking to response
                     if self._last_event_type == "thinking":
                         self._thinking_buf = ""
@@ -360,6 +363,7 @@ class ChatApp(App):
 
                 case DoneEvent(error=error):
                     self._generating = False
+                    self.sub_title = ""
                     # Finalize any remaining response/thinking
                     self._reset_response()
                     self._reset_thinking()
@@ -478,8 +482,19 @@ class ChatApp(App):
         chat_area.mount(widget)
         chat_area.scroll_end(animate=False)
 
+    def _print_system_feedback(self, text: str) -> None:
+        """Print dim feedback about a config change."""
+        chat_area = self.query_one("#chat-area", VerticalScroll)
+        widget = Static(f"[dim orange]{text}[/dim orange]")
+        chat_area.mount(widget)
+        chat_area.scroll_end(animate=False)
+
 
 def cli() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "services":
+        services_main(sys.argv[2:])
+        return
+
     parser = argparse.ArgumentParser(description="LocalAI TUI")
     parser.add_argument("--config", default=None, help="Path to TOML config file")
     parser.add_argument("--preset", default=None, help="Preset name (default: first section)")
@@ -509,7 +524,9 @@ def cli() -> None:
         tools.append(tool_name_map[name])
 
     provider = (
-        OllamaProvider() if cfg.provider == "ollama" else OpenAICompatibleProvider(base_url=f"http://{cfg.provider}/v1")
+        OllamaProvider()
+        if cfg.provider == "ollama"
+        else OpenAICompatibleProvider(base_url=f"http://{cfg.provider}/v1", api_key=cfg.api_key or "")
     )
 
     system_prompt = None
@@ -525,6 +542,9 @@ def cli() -> None:
         tool_classes=tools,
         system_prompt=system_prompt,
         system_prompt_path=cfg.system_prompt_path,
+        api_key=cfg.api_key or "",
+        searxng_url=cfg.searxng_url,
+        jina_reader_url=cfg.jina_reader_url,
     )
 
     async def run_app():

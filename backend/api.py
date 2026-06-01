@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from tarfile import data_filter
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from openai import AsyncOpenAI
 
 from backend.backend import Backend
 from backend.events import *
@@ -52,8 +53,9 @@ class BackendAPI:
     system_prompt: str | None
     system_prompt_path: str | None
 
-    searxng_url: str = "http://localhost:4000"
-    jina_reader_url: str = "http://localhost:3001"
+    searxng_url: str
+    jina_reader_url: str
+    api_key: str = ""
 
     _backend: Backend = field(init=False)
 
@@ -119,7 +121,13 @@ class BackendAPI:
 
     def set_context_length(self, value: int) -> None:
         self.context_length = value
-        self.provider._context_length = value
+        self.provider.context_length = value
+        self._backend.messages.max_size = value
+
+    def set_api_key(self, value: str | None) -> None:
+        self.api_key = value or ""
+        if isinstance(self.provider, OpenAICompatibleProvider):
+            self.provider.client = AsyncOpenAI(base_url=str(self.provider.client.base_url), api_key=self.api_key)
 
     # Getters
 
@@ -138,7 +146,7 @@ class BackendAPI:
         elif isinstance(self.provider, OpenAICompatibleProvider):
             base_url = str(self.provider.client.base_url)
             return base_url.replace("/v1", "") if base_url.endswith("/v1") else base_url
-        raise
+        raise Exception("Invalid provider type")
 
     def get_enabled_tools(self) -> list[str]:
         return [t.name for t in self.tool_classes]

@@ -71,7 +71,7 @@ def _set_provider(app: ChatApp, value: str) -> None:
     if value == "ollama":
         provider = OllamaProvider()
     else:
-        provider = OpenAICompatibleProvider(base_url=f"http://{value}/v1")
+        provider = OpenAICompatibleProvider(base_url=f"http://{value}/v1", api_key=app.api.api_key or "")
     app.api.set_provider(provider)
 
 
@@ -155,7 +155,7 @@ FIELDS: list[FieldDef] = [
         default=4096,
         description="Context window length of the model (higher number increases RAM usage)",
         menu=TextInputMenu(
-            get_current=lambda f: f.api.context_length, set_current=lambda f, v: f.api.set_context_length(v)
+            get_current=lambda f: f.api.context_length, set_current=lambda f, v: f.api.set_context_length(int(v))
         ),
         show=False,
     ),
@@ -182,6 +182,20 @@ FIELDS: list[FieldDef] = [
         menu=TextInputMenu(
             get_current=lambda f: f.api.jina_reader_url,
             set_current=lambda f, v: f.api.set_jina_reader_url(v),
+        ),
+        show=False,
+    ),
+    FieldDef(
+        name="api_key",
+        type=str | None,
+        default=None,
+        description="API key for OpenAI-compatible provider (if required)",
+        config_comment="Uncomment and set if using an authenticated OpenAI-compatible endpoint",
+        commented_by_default=True,
+        menu=TextInputMenu(
+            get_current=lambda f: f.api.api_key or "",
+            set_current=lambda f, v: f.api.set_api_key(v if v else None),
+            nullable=True,
         ),
         show=False,
     ),

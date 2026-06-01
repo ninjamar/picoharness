@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import uuid
 from collections import namedtuple
 from collections.abc import AsyncGenerator
@@ -28,8 +27,8 @@ from backend.tools import BaseTool
 
 @dataclass
 class _ToolConfig:
-    searxng_url: str = "http://localhost:4000"
-    jina_reader_url: str = "http://localhost:3001"
+    searxng_url: str | None
+    jina_reader_url: str | None
 
 
 _SENTINEL = object()
@@ -45,6 +44,27 @@ class _InputSentinel:
 ToolExecutionResult = namedtuple("ToolExecutionResult", ["result", "error", "output_format"])
 
 
+class MessageStore:
+    def __init__(self, max_size):
+        self.max_size = max_size
+        self.messages = []
+        self.trimmed = []
+        self.trimmed_size = 0
+
+    def append(self, item):
+        self.messages.append(item)
+        size = len(item["content"]) // 4
+        self.trimmed.append(item)
+        self.trimmed_size += size
+
+        while self.trimmed_size > self.max_size:
+            for idx, msg in enumerate(self.trimmed):
+                if msg["role"] != "system":
+                    self.trimmed_size -= len(msg["content"]) // 4
+                    del self.trimmed[idx]
+                    break
+
+
 class Backend:
     def __init__(
         self,
@@ -55,8 +75,8 @@ class Backend:
         tools: list[type[BaseTool]] | None = None,
         system_prompt: str | None = None,
         system_prompt_path: str | None = None,
-        searxng_url: str = "http://localhost:4000",
-        jina_reader_url: str = "http://localhost:3001",
+        searxng_url: str | None = None,
+        jina_reader_url: str | None = None,
     ) -> None:
         self._provider = provider
         self._model = model
@@ -71,11 +91,10 @@ class Backend:
 
         self._tool_instances: list[BaseTool] = []
 
-        self._messages: list[dict[str, Any]] = (
-            []
-            if system_prompt is None
-            else [{"role": "system", "content": format_system_prompt(system_prompt, self._tool_classes)}]
-        )
+        self.messages = MessageStore(int(self._provider.context_length * 0.75))
+        if system_prompt is not None:
+            self.messages.append({"role": "system", "content": format_system_prompt(system_prompt, self._tool_classes)})
+
         self._input_queue: asyncio.Queue[tuple[str, str] | _InputSentinel] = asyncio.Queue()
         self._event_queue: asyncio.Queue[Event | _InputSentinel] = asyncio.Queue()
         self._process_task: asyncio.Task | None = None
@@ -120,10 +139,11 @@ class Backend:
             init_tasks = [asyncio.create_task(self._init_tool(cls, self._tool_config)) for cls in self._tool_classes]
             self._tool_instances = list(await asyncio.gather(*init_tasks))
 
-        try:
-            asyncio.create_task(_do_instantiate())
-        except RuntimeError:
-            pass
+        # try:
+        asyncio.create_task(_do_instantiate())
+        # except RuntimeError:
+        #    # Todo: figure out
+        #    pass
 
     def feed(self, input_id: str, text: str) -> None:
         self._input_queue.put_nowait((input_id, text))
@@ -159,7 +179,7 @@ class Backend:
     async def _run_turn(self, input_id: str, text: str) -> None:
         # start_len = len(self._messages)
 
-        self._messages.append({"role": "user", "content": text})
+        self.messages.append({"role": "user", "content": text})
 
         try:
             await self._event_queue.put(UserInputEvent(id=input_id, text=text))
@@ -170,7 +190,7 @@ class Backend:
 
                 async for part in self._provider.chat(
                     model=self._model,
-                    messages=self._messages,
+                    messages=self.messages.trimmed,
                     think=self._think,
                 ):
                     if fragment := part.message.thinking:
@@ -195,7 +215,7 @@ class Backend:
                 msg: dict[str, Any] = {"role": "assistant", "content": response_text}
                 if tool_calls:
                     msg["tool_calls"] = tool_calls
-                self._messages.append(msg)
+                self.messages.append(msg)
 
                 if not tool_calls:
                     break
@@ -240,7 +260,7 @@ class Backend:
                         )
 
                 for tc in tool_calls:
-                    self._messages.append(
+                    self.messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tc["id"],
@@ -261,7 +281,7 @@ class Backend:
         except Exception as e:
             # Tell model there is an error so it hopefully doesn't keep trying to do the same
             # action on every next turn.
-            self._messages.append({"role": "system", "content": f"Error: {str(e)}"})
+            self.messages.append({"role": "system", "content": f"Error: {str(e)}"})
             await self._event_queue.put(DoneEvent(id=input_id, error=str(e), interrupted=False))
 
     async def _execute_tool(self, name: str, args: dict) -> ToolExecutionResult:

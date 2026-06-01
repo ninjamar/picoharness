@@ -38,7 +38,7 @@ class ModelInfo:
 
 
 class BaseProvider:
-    _context_length = 4096
+    context_length = 4096
     tool_schemas: list[dict[str, Any]]
 
     def __init__(self) -> None:
@@ -78,7 +78,7 @@ class OllamaProvider(BaseProvider):
             stream=True,  # always Stream
             think=think,
             tools=self.tool_schemas,
-            options={"num_ctx": self._context_length},
+            options={"num_ctx": self.context_length},
         ):
             tool_calls = [
                 _ToolCall(function=_ToolCallFunction(name=tc.function.name, arguments=dict(tc.function.arguments)))
@@ -141,7 +141,7 @@ class OpenAICompatibleProvider(BaseProvider):
             stream=True,
             tools=self.tool_schemas,
             reasoning_effort="high" if think else "none",
-            max_completion_tokens=self._context_length,
+            max_completion_tokens=self.context_length,
         ):
             delta = chunk.choices[0].delta if chunk.choices else None
             if not delta:
