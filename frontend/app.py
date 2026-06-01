@@ -2,10 +2,33 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 import time
 import uuid
 from pathlib import Path
+
+from pylatexenc.latex2text import LatexNodes2Text
+
+_latex_converter = LatexNodes2Text()
+
+
+def _render_latex(text: str) -> str:
+    def replace_block(m: re.Match) -> str:
+        try:
+            return f"\n```\n{_latex_converter.latex_to_text(m.group(1))}\n```\n"
+        except Exception:
+            return m.group(0)
+
+    def replace_inline(m: re.Match) -> str:
+        try:
+            return f"`{_latex_converter.latex_to_text(m.group(1))}`"
+        except Exception:
+            return m.group(0)
+
+    text = re.sub(r'\$\$(.*?)\$\$', replace_block, text, flags=re.DOTALL)
+    text = re.sub(r'\$(.*?)\$', replace_inline, text)
+    return text
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
@@ -61,7 +84,7 @@ class ChatApp(App):
 
     TITLE = "PicoHarness"
     CSS_PATH = "style.tcss"
-    theme = "nord"
+    theme = "nord" # type: ignore
 
     BINDINGS = []
 
@@ -373,6 +396,7 @@ class ChatApp(App):
     def _reset_response(self) -> None:
         """Finalize and clear response accumulator."""
         if self._current_md is not None:
+            self._current_md.update(_render_latex(self._response_buf))
             self._current_md = None
         self._response_buf = ""
 
@@ -432,7 +456,7 @@ class ChatApp(App):
     def _mount_response(self, text: str) -> None:
         """Mount a response (markdown) to the chat area."""
         chat_area = self.query_one("#chat-area", VerticalScroll)
-        widget = Markdown(text, classes="response")
+        widget = Markdown(_render_latex(text), classes="response")
         chat_area.mount(widget)
         chat_area.scroll_end(animate=False)
 

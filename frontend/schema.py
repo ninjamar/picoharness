@@ -82,7 +82,7 @@ FIELDS: list[FieldDef] = [
     FieldDef(
         name="model",
         type=str,
-        default="qwen3:2b",
+        default="qwen3:4b",
         description="Ollama/OpenAI-compatible model identifier",
         menu=DialogueMenu(
             get_current=lambda f: f.api.model,

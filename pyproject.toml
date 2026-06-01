@@ -14,6 +14,7 @@ dependencies = [
     "ollama>=0.6.1",
     "openai>=2.32.0",
     "pydantic>=2.13.2",
+    "pylatexenc>=2.10",
     "textual>=8.2.7",
     "tomlkit>=0.11",
     "wikipedia-api>=0.7",
