@@ -4,7 +4,7 @@ import wikipediaapi
 
 from backend.tools.base import BaseTool
 
-_USER_AGENT = "localai/1.0"
+_USER_AGENT = "picoharness/1.0"
 # TODO: This always instantiates when imported
 _wiki = wikipediaapi.AsyncWikipedia(user_agent=_USER_AGENT, language="en")
 

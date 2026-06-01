@@ -57,9 +57,9 @@ class InputOverlay(Container):
 
 
 class ChatApp(App):
-    """Textual app for LocalAI chat interface with inline config panels."""
+    """Textual app for PicoHarness chat interface with inline config panels."""
 
-    TITLE = "LocalAI"
+    TITLE = "PicoHarness"
     CSS_PATH = "style.tcss"
     theme = "nord"
 
@@ -84,7 +84,7 @@ class ChatApp(App):
 
     def on_mount(self) -> None:
         """Initialize the app."""
-        self.title = "LocalAI"
+        self.title = "PicoHarness"
         # Initialize streaming state
         self._current_md: Markdown | None = None
         self._response_buf: str = ""
@@ -439,7 +439,7 @@ class ChatApp(App):
     def _print_header(self) -> None:
         """Mount a header message."""
         chat_area = self.query_one("#chat-area", VerticalScroll)
-        header = Static("[bold]LocalAI[/bold]", id="header")
+        header = Static("[bold]PicoHarness[/bold]", id="header")
         chat_area.mount(header)
         hint = Static("[dim]Ctrl+C to interrupt/exit · /help for commands[/dim]", id="hint")
         chat_area.mount(hint)
@@ -495,7 +495,7 @@ def cli() -> None:
         services_main(sys.argv[2:])
         return
 
-    parser = argparse.ArgumentParser(description="LocalAI TUI")
+    parser = argparse.ArgumentParser(description="PicoHarness TUI")
     parser.add_argument("--config", default=None, help="Path to TOML config file")
     parser.add_argument("--preset", default=None, help="Preset name (default: first section)")
     parser.add_argument(

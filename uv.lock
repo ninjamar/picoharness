@@ -326,53 +326,6 @@ wheels = [
 ]
 
 [[package]]
-name = "localai"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "jinja2" },
-    { name = "ollama" },
-    { name = "openai" },
-    { name = "pydantic" },
-    { name = "textual" },
-    { name = "tomlkit" },
-    { name = "wikipedia-api" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "isort" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-    { name = "textual-dev" },
-    { name = "ty" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.13.5" },
-    { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "ollama", specifier = ">=0.6.1" },
-    { name = "openai", specifier = ">=2.32.0" },
-    { name = "pydantic", specifier = ">=2.13.2" },
-    { name = "textual", specifier = ">=8.2.7" },
-    { name = "tomlkit", specifier = ">=0.11" },
-    { name = "wikipedia-api", specifier = ">=0.7" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "isort", specifier = ">=8.0.1" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.25" },
-    { name = "ruff", specifier = ">=0.15.10" },
-    { name = "textual-dev", specifier = ">=1.8.0" },
-    { name = "ty", specifier = ">=0.0.29" },
-]
-
-[[package]]
 name = "markdown-it-py"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -550,6 +503,55 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/df/de/0d2b39fb4af88a0258f3bac87dfcbb48e73fbdea4a2ed0e2213f9a4c2f9a/packaging-26.1.tar.gz", hash = "sha256:f042152b681c4bfac5cae2742a55e103d27ab2ec0f3d88037136b6bfe7c9c5de", size = 215519, upload-time = "2026-04-14T21:12:49.362Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7a/c2/920ef838e2f0028c8262f16101ec09ebd5969864e5a64c4c05fad0617c56/packaging-26.1-py3-none-any.whl", hash = "sha256:5d9c0669c6285e491e0ced2eee587eaf67b670d94a19e94e3984a481aba6802f", size = 95831, upload-time = "2026-04-14T21:12:47.56Z" },
+]
+
+[[package]]
+name = "picoharness"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "jinja2" },
+    { name = "ollama" },
+    { name = "openai" },
+    { name = "pydantic" },
+    { name = "textual" },
+    { name = "tomlkit" },
+    { name = "wikipedia-api" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "isort" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+    { name = "textual-dev" },
+    { name = "ty" },
+    { name = "vermin" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.5" },
+    { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "ollama", specifier = ">=0.6.1" },
+    { name = "openai", specifier = ">=2.32.0" },
+    { name = "pydantic", specifier = ">=2.13.2" },
+    { name = "textual", specifier = ">=8.2.7" },
+    { name = "tomlkit", specifier = ">=0.11" },
+    { name = "wikipedia-api", specifier = ">=0.7" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "isort", specifier = ">=8.0.1" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.25" },
+    { name = "ruff", specifier = ">=0.15.10" },
+    { name = "textual-dev", specifier = ">=1.8.0" },
+    { name = "ty", specifier = ">=0.0.29" },
+    { name = "vermin", specifier = ">=1.8.0" },
 ]
 
 [[package]]
@@ -885,6 +887,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/78/67/9a363818028526e2d4579334460df777115bdec1bb77c08f9db88f6389f2/uc_micro_py-2.0.0.tar.gz", hash = "sha256:c53691e495c8db60e16ffc4861a35469b0ba0821fe409a8a7a0a71864d33a811", size = 6611, upload-time = "2026-03-01T06:31:27.526Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/61/73/d21edf5b204d1467e06500080a50f79d49ef2b997c79123a536d4a17d97c/uc_micro_py-2.0.0-py3-none-any.whl", hash = "sha256:3603a3859af53e5a39bc7677713c78ea6589ff188d70f4fee165db88e22b242c", size = 6383, upload-time = "2026-03-01T06:31:26.257Z" },
+]
+
+[[package]]
+name = "vermin"
+version = "1.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/7b/2c1b403f2a844e1acb36694fc336e323df742f7f752edb4188311ad43f9e/vermin-1.8.0.tar.gz", hash = "sha256:3621955ac2a2950175c5b4a9b2fc3bd24bd416da0388893c9eb6971264e4ca1f", size = 99913, upload-time = "2025-11-20T17:29:31.509Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e6/fd/6d2167767488e162efd01300a679c7f7d913dbb65baa0b15760ebb369854/vermin-1.8.0-py3-none-any.whl", hash = "sha256:6f2b98ad697a16ed3442e81a0f0baabfc38c185b78aaab1b1fecd87bdd6640b8", size = 98030, upload-time = "2025-11-20T17:29:29.931Z" },
 ]
 
 [[package]]

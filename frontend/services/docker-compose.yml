@@ -1,6 +1,6 @@
-# Optional services for LocalAI: Jina Reader and SearXNG
+# Optional services for PicoHarness: Jina Reader and SearXNG
 # These enable web search and webpage reading capabilities
-# Run with: localai services up
+# Run with: ph services up
 
 services:
   jina-reader:
