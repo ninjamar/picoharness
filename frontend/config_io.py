@@ -80,5 +80,6 @@ def generate_config(path: Path) -> None:
             table.add(f.name, f.default)
 
     doc.add("base", table)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(tomlkit.dumps(doc))
     print(f"Config written to {path}")

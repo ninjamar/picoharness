@@ -18,13 +18,13 @@ A TUI chat interface that runs small local models as tool-calling agents. Models
 uv tool install git+https://github.com/ninjamar/picoharness
 
 # 2. Pull a model (browse models at https://ollama.com/library)
-ollama pull qwen3:2b
+ollama pull qwen3:4b
 
-# 3. Generate a config
-ph --generate-config config.toml
+# 3. Generate a config (writes to ~/.ph/config.toml by default)
+ph init
 
 # 4. Start the chat UI
-ph --config config.toml --preset base
+ph chat
 ```
 
 The default config targets Ollama with `qwen3:2b` and enables all tools that don't require external services.
@@ -35,12 +35,15 @@ The default config targets Ollama with `qwen3:2b` and enables all tools that don
 
 Generate an initial config:
 ```bash
-ph --generate-config config.toml
+ph init                    # writes ~/.ph/config.toml
+ph init ~/myconfig.toml    # custom path
 ```
 
-Edit `config.toml`, then launch with a preset:
+Launch the TUI:
 ```bash
-ph --config config.toml --preset base
+ph chat                         # uses ~/.ph/config.toml, first preset
+ph chat my_preset               # explicit preset
+ph --config ~/myconfig.toml chat my_preset   # custom config
 ```
 
 A **preset** is a named `[section]` in the TOML file — useful for keeping separate profiles per model or use case. You can define as many as you want in one file.
@@ -85,8 +88,8 @@ ph --config config.toml --preset search_wikipedia
 Requires Docker. `search_web` and `read_webpage` depend on self-hosted services.
 
 ```bash
-ph services up -d        # Start services in background
-ph services down         # Stop services
+ph service start     # Start services in background
+ph service stop      # Stop services
 ```
 
 This starts:
@@ -98,3 +101,14 @@ Then add to your config:
 searxng_url = "http://localhost:4000"
 jina_reader_url = "http://localhost:3001"
 ```
+
+## Diagnostics
+
+Run `ph doctor` to check that your configured provider and optional services are reachable:
+
+```bash
+ph doctor           # check default preset
+ph doctor my_preset # check a specific preset
+```
+
+This reports pass/fail for: your LLM provider, SearXNG (if configured), and Jina Reader (if configured).

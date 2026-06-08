@@ -513,30 +513,25 @@ class ChatApp(App):
         chat_area.scroll_end(animate=False)
 
 
-def cli() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] == "services":
-        services_main(sys.argv[2:])
-        return
+DEFAULT_CONFIG = Path.home() / ".ph" / "config.toml"
 
-    parser = argparse.ArgumentParser(description="PicoHarness TUI")
-    parser.add_argument("--config", default=None, help="Path to TOML config file")
-    parser.add_argument("--preset", default=None, help="Preset name (default: first section)")
-    parser.add_argument(
-        "--generate-config",
-        metavar="PATH",
-        default=None,
-        help="Generate a sample config file at PATH and exit",
-    )
-    args = parser.parse_args()
 
-    if args.generate_config:
-        generate_config(Path(args.generate_config))
-        return
+def _cmd_init(args: argparse.Namespace) -> None:
+    path = Path(args.path) if args.path else DEFAULT_CONFIG
+    if path.exists():
+        answer = input(f"{path} already exists. Overwrite? [y/N] ").strip().lower()
+        if answer != "y":
+            print("Aborted.")
+            return
+    generate_config(path)
 
-    if not args.config:
-        parser.error("--config is required (or use --generate-config PATH to create one)")
 
-    cfg = load_config(Path(args.config), args.preset)
+def _cmd_chat(args: argparse.Namespace) -> None:
+    config_path = Path(args.config) if args.config else DEFAULT_CONFIG
+    if not config_path.exists():
+        raise SystemExit(f"Config not found: {config_path}\nRun `ph init` to create one.")
+
+    cfg = load_config(config_path, args.preset)
 
     tool_name_map: dict[str, type] = {tool.name: tool for tool in ALL_TOOLS}
     tools = []
@@ -576,3 +571,60 @@ def cli() -> None:
             await app.run_async()
 
     asyncio.run(run_app())
+
+
+def _cmd_service(args: argparse.Namespace) -> None:
+    if args.action == "start":
+        services_main(["up", "-d"])
+    else:
+        services_main(["down"])
+
+
+def _cmd_doctor(args: argparse.Namespace) -> None:
+    from frontend.doctor_cmd import doctor_main
+
+    config_path = Path(args.config) if args.config else DEFAULT_CONFIG
+    if not config_path.exists():
+        raise SystemExit(f"Config not found: {config_path}\nRun `ph init` to create one.")
+    sys.exit(doctor_main(config_path, args.preset))
+
+
+def cli() -> None:
+    parser = argparse.ArgumentParser(prog="ph", description="PicoHarness — local LLM agent TUI")
+    parser.add_argument(
+        "--config",
+        "-c",
+        metavar="PATH",
+        default=None,
+        help="Override config path (default: ~/.ph/config.toml)",
+    )
+
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
+    sub.required = True
+
+    p_init = sub.add_parser("init", help="Write a sample config file")
+    p_init.add_argument("path", nargs="?", default=None, metavar="PATH")
+
+    p_chat = sub.add_parser("chat", help="Start the TUI chat interface")
+    p_chat.add_argument("preset", nargs="?", default=None, metavar="PRESET")
+
+    p_service = sub.add_parser("service", help="Start or stop Docker services")
+    p_service.add_argument("action", choices=["start", "stop"], metavar="start|stop")
+
+    p_doctor = sub.add_parser("doctor", help="Check that provider is reachable")
+    p_doctor.add_argument("preset", nargs="?", default=None, metavar="PRESET")
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return
+    args = parser.parse_args()
+
+    match args.command:
+        case "init":
+            _cmd_init(args)
+        case "chat":
+            _cmd_chat(args)
+        case "service":
+            _cmd_service(args)
+        case "doctor":
+            _cmd_doctor(args)
