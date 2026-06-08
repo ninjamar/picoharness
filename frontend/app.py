@@ -100,9 +100,11 @@ class ChatApp(App):
             yield CompletionMenu(id="completion")
             yield CommandPanel(id="command-panel")
 
-        with Horizontal(id="input-line"):
-            yield Static(">", id="input-prompt", expand=False)
-            yield InputArea(id="input-area")
+        with Container(id="input-section"):
+            yield Static("", id="status-bar")
+            with Horizontal(id="input-line"):
+                yield Static(">", id="input-prompt", expand=False)
+                yield InputArea(id="input-area")
 
     def on_mount(self) -> None:
         """Initialize the app."""
@@ -116,6 +118,9 @@ class ChatApp(App):
         self._generating = False  # Track if LLM is generating
         self._last_ctrlc_time: float = 0.0
         self._auto_scroll: bool = True  # Auto-scroll active when True
+        self._response_dirty: bool = False
+        self._thinking_dirty: bool = False
+        self._working_dots: int = 0  # Cycles through 0, 1, 2, 3
 
         # Populate the completion menu with all commands
         completion_menu = self.query_one("#completion", CompletionMenu)
@@ -129,6 +134,11 @@ class ChatApp(App):
         # Register scroll position watcher
         chat_area = self.query_one("#chat-area", VerticalScroll)
         self.watch(chat_area, "scroll_y", self._on_chat_area_scroll_y_changed)
+
+        # Update status bar immediately and on interval
+        self._update_status_bar()
+        self.set_interval(1.0, self._update_status_bar)
+        self.set_interval(UPDATE_INTERVAL, self._flush_pending_updates)
 
         self._print_header()
         self._start_event_loop_worker()
@@ -337,27 +347,24 @@ class ChatApp(App):
                     pass  # User message already mounted
 
                 case ThinkingEvent(fragment=fragment):
-                    if not self._generating:
-                        self._generating = True
-                        self.sub_title = "generating…"
+                    # if not self._generating:
+                    self._generating = True
+                    self._update_status_bar()
                     if self.show_think:
                         self._thinking_buf += fragment
                         if self._thinking_md is None:
                             # First thinking fragment - mount widget
                             chat_area = self.query_one("#chat-area", VerticalScroll)
                             self._thinking_md = Static(self._thinking_buf, classes="thinking")
-                            chat_area.mount(self._thinking_md)
+                            await chat_area.mount(self._thinking_md)
                             self._scroll_to_bottom_if_following()
                         else:
-                            # Update existing thinking widget
-                            self._thinking_md.update(self._thinking_buf)
-                            chat_area = self.query_one("#chat-area", VerticalScroll)
-                            self._scroll_to_bottom_if_following()
+                            self._thinking_dirty = True
 
                 case ResponseEvent(fragment=fragment):
-                    if not self._generating:
-                        self._generating = True
-                        self.sub_title = "generating…"
+                    # if not self._generating:
+                    self._generating = True
+                    self._update_status_bar()
                     # Reset thinking if transitioning from thinking to response
                     if self._last_event_type == "thinking":
                         self._thinking_buf = ""
@@ -371,13 +378,11 @@ class ChatApp(App):
                         await chat_area.mount(self._current_md)
                         self._scroll_to_bottom_if_following()
                     else:
-                        # Update existing response widget
-                        self._current_md.update(self._response_buf)
-                        chat_area = self.query_one("#chat-area", VerticalScroll)
-                        self._scroll_to_bottom_if_following()
+                        self._response_dirty = True
                     self._last_event_type = "response"
 
                 case ToolStartEvent(tool_name=name, tool_input=inp):
+                    self._generating = True
                     # Finalize current response/thinking
                     self._reset_response()
                     self._reset_thinking()
@@ -392,11 +397,23 @@ class ChatApp(App):
                 case DoneEvent(error=error):
                     self._generating = False
                     self.sub_title = ""
+                    self._update_status_bar()
                     # Finalize any remaining response/thinking
                     self._reset_response()
                     self._reset_thinking()
                     if error:
                         self._mount_error(error)
+
+    def _flush_pending_updates(self) -> None:
+        """Flush throttled widget updates at UPDATE_INTERVAL cadence."""
+        if self._response_dirty and self._current_md is not None:
+            self._current_md.update(self._response_buf)
+            self._response_dirty = False
+            self._scroll_to_bottom_if_following()
+        if self._thinking_dirty and self._thinking_md is not None:
+            self._thinking_md.update(self._thinking_buf)
+            self._thinking_dirty = False
+            self._scroll_to_bottom_if_following()
 
     def _reset_response(self) -> None:
         """Finalize and clear response accumulator."""
@@ -404,12 +421,14 @@ class ChatApp(App):
             self._current_md.update(_render_latex(self._response_buf))
             self._current_md = None
         self._response_buf = ""
+        self._response_dirty = False
 
     def _reset_thinking(self) -> None:
         """Finalize and clear thinking accumulator."""
         if self._thinking_md is not None:
             self._thinking_md = None
         self._thinking_buf = ""
+        self._thinking_dirty = False
 
     def _on_chat_area_scroll_y_changed(self, scroll_y: float) -> None:
         """Update auto-scroll flag based on scroll position."""
@@ -420,6 +439,16 @@ class ChatApp(App):
         """Scroll to bottom only when auto-scroll is active."""
         if self._auto_scroll:
             self.query_one("#chat-area", VerticalScroll).scroll_end(animate=False)
+
+    def _update_status_bar(self) -> None:
+        """Update the status bar with context window and generation status."""
+        trimmed, max_ctx, total_size = self.api.context_window
+        status = f"total: {total_size} | context window: {trimmed}/{max_ctx}"
+        if self._generating:
+            dots = "." * self._working_dots
+            status += f" | working{dots}"
+            self._working_dots = (self._working_dots + 1) % 4
+        self.query_one("#status-bar", Static).update(status)
 
     def _mount_user_message(self, text: str) -> None:
         """Mount a user message in the chat area."""

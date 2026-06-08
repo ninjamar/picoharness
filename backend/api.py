@@ -122,7 +122,7 @@ class BackendAPI:
     def set_context_length(self, value: int) -> None:
         self.context_length = value
         self.provider.context_length = value
-        self._backend.messages.max_size = value
+        self._backend.messages.max_size = int(value * 0.75)
 
     def set_api_key(self, value: str | None) -> None:
         self.api_key = value or ""
@@ -130,15 +130,6 @@ class BackendAPI:
             self.provider.client = AsyncOpenAI(base_url=str(self.provider.client.base_url), api_key=self.api_key)
 
     # Getters
-
-    # @property
-    # def provider(self) -> str:
-    #     if isinstance(self._provider, OllamaProvider):
-    #         return "ollama"
-    #     elif isinstance(self._provider, OpenAICompatibleProvider):
-    #         base_url = str(self._provider.client.base_url)
-    #         return base_url.replace("/v1", "") if base_url.endswith("/v1") else base_url
-    #     return "unknown"
 
     def get_provider_type(self) -> str:
         if isinstance(self.provider, OllamaProvider):
@@ -156,3 +147,9 @@ class BackendAPI:
 
     async def get_available_models(self) -> list[ModelInfo]:
         return await self.provider.list_models()
+
+    @property
+    def context_window(self) -> tuple[int, int, int]:
+        """Returns (actual_tokens, total_messages, context_length)."""
+        m = self._backend.messages
+        return m.actual_size, self.context_length, m.total_size

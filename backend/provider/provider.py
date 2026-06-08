@@ -28,6 +28,7 @@ class _ChatMessage:
 @dataclass
 class _ChatResponse:
     message: _ChatMessage
+    token_count: int
 
 
 @dataclass
@@ -39,6 +40,7 @@ class ModelInfo:
 
 class BaseProvider:
     context_length = 4096
+
     tool_schemas: list[dict[str, Any]]
 
     def __init__(self) -> None:
@@ -84,12 +86,14 @@ class OllamaProvider(BaseProvider):
                 _ToolCall(function=_ToolCallFunction(name=tc.function.name, arguments=dict(tc.function.arguments)))
                 for tc in (part.message.tool_calls or [])
             ]
+
             yield _ChatResponse(
                 message=_ChatMessage(
                     content=part.message.content,
                     thinking=part.message.thinking,
                     tool_calls=tool_calls,
-                )
+                ),
+                token_count=(part.prompt_eval_count or 0) + (part.eval_count or 0),
             )
 
     async def list_models(self) -> list[ModelInfo]:
@@ -147,16 +151,18 @@ class OpenAICompatibleProvider(BaseProvider):
             if not delta:
                 continue
             # print(delta)
+
+            token_count = (chunk.input_tokens or 0) + (chunk.output_tokens or 0)
             thinking = (
                 getattr(delta, "reasoning_content", None)
                 or getattr(delta, "reasoning", None)
                 or getattr(delta, "thinking", None)
             )
             if thinking:
-                yield _ChatResponse(message=_ChatMessage(thinking=thinking))
+                yield _ChatResponse(message=_ChatMessage(thinking=thinking), token_count=token_count)
 
             if delta.content:
-                yield _ChatResponse(message=_ChatMessage(content=delta.content))
+                yield _ChatResponse(message=_ChatMessage(content=delta.content), token_count=token_count)
 
             for tc in delta.tool_calls or []:  # delta.tool_calls could be None
                 if tc.index not in accum:
@@ -168,7 +174,7 @@ class OpenAICompatibleProvider(BaseProvider):
                 _ToolCall(function=_ToolCallFunction(name=v["name"], arguments=json.loads(v["arguments"])))
                 for v in accum.values()
             ]
-            yield _ChatResponse(message=_ChatMessage(tool_calls=tool_calls))
+            yield _ChatResponse(message=_ChatMessage(tool_calls=tool_calls), token_count=0)
 
     async def list_models(self) -> list[ModelInfo]:
         response = await self.client.models.list()

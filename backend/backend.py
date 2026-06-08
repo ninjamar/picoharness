@@ -23,6 +23,7 @@ from backend.events import (
 from backend.provider import BaseProvider
 from backend.system_prompt import format_system_prompt
 from backend.tools import BaseTool
+from backend.tools.web.browse import close_session
 
 
 @dataclass
@@ -49,18 +50,22 @@ class MessageStore:
         self.max_size = max_size
         self.messages = []
         self.trimmed = []
-        self.trimmed_size = 0
+        self.actual_size = 0
+        self.total_size = 0
 
     def append(self, item):
         self.messages.append(item)
-        size = len(item["content"]) // 4
         self.trimmed.append(item)
-        self.trimmed_size += size
 
-        while self.trimmed_size > self.max_size:
+    def set_actual_size(self, size: int) -> None:
+        self.total_size += size - self.actual_size
+
+        self.actual_size = size
+
+    def trim(self) -> None:
+        while self.actual_size > self.max_size:
             for idx, msg in enumerate(self.trimmed):
                 if msg["role"] != "system":
-                    self.trimmed_size -= len(msg["content"]) // 4
                     del self.trimmed[idx]
                     break
 
@@ -126,6 +131,7 @@ class Backend:
                 await self._process_task
             except asyncio.CancelledError:
                 pass
+        await close_session()
         await self._event_queue.put(_SENTINEL)  # type: ignore
 
     @staticmethod
@@ -187,12 +193,16 @@ class Backend:
             while True:
                 response_text = ""
                 tool_calls: list[dict[str, Any]] = []
+                last_token_count = 0
 
                 async for part in self._provider.chat(
                     model=self._model,
                     messages=self.messages.trimmed,
                     think=self._think,
                 ):
+                    if part.token_count:
+                        last_token_count = part.token_count
+
                     if fragment := part.message.thinking:
                         await self._event_queue.put(ThinkingEvent(id=input_id, fragment=fragment))
 
@@ -216,6 +226,10 @@ class Backend:
                 if tool_calls:
                     msg["tool_calls"] = tool_calls
                 self.messages.append(msg)
+
+                if last_token_count:
+                    self.messages.set_actual_size(last_token_count)
+                    self.messages.trim()
 
                 if not tool_calls:
                     break

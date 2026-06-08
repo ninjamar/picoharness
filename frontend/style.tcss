@@ -12,16 +12,27 @@ Screen {
     align-vertical: bottom;
 }
 
+#input-section {
+    height: auto;
+    layout: vertical;
+    border-top: solid $border;
+}
+
 #input-line {
     height: auto;
     layout: horizontal;
-    border-top: solid $border;
 }
 
 #input-prompt {
     width: auto;
     padding: 0 0 0 2;
     color: $accent;
+}
+
+#status-bar {
+    height: 1;
+    padding: 0 2;
+    color: $text-muted;
 }
 
 #input-area {
