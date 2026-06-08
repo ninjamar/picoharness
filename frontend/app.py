@@ -83,7 +83,7 @@ class ChatApp(App):
 
     TITLE = "PicoHarness"
     CSS_PATH = "style.tcss"
-    theme = "nord"  # type: ignore
+    theme = "nord"
 
     BINDINGS = []
 
@@ -115,6 +115,7 @@ class ChatApp(App):
         self._last_event_type: str | None = None
         self._generating = False  # Track if LLM is generating
         self._last_ctrlc_time: float = 0.0
+        self._auto_scroll: bool = True  # Auto-scroll active when True
 
         # Populate the completion menu with all commands
         completion_menu = self.query_one("#completion", CompletionMenu)
@@ -124,6 +125,11 @@ class ChatApp(App):
 
         input_area = self.query_one("#input-area", InputArea)
         input_area.focus()
+
+        # Register scroll position watcher
+        chat_area = self.query_one("#chat-area", VerticalScroll)
+        self.watch(chat_area, "scroll_y", self._on_chat_area_scroll_y_changed)
+
         self._print_header()
         self._start_event_loop_worker()
 
@@ -341,12 +347,12 @@ class ChatApp(App):
                             chat_area = self.query_one("#chat-area", VerticalScroll)
                             self._thinking_md = Static(self._thinking_buf, classes="thinking")
                             chat_area.mount(self._thinking_md)
-                            chat_area.scroll_end(animate=False)
+                            self._scroll_to_bottom_if_following()
                         else:
                             # Update existing thinking widget
                             self._thinking_md.update(self._thinking_buf)
                             chat_area = self.query_one("#chat-area", VerticalScroll)
-                            chat_area.scroll_end(animate=False)
+                            self._scroll_to_bottom_if_following()
 
                 case ResponseEvent(fragment=fragment):
                     if not self._generating:
@@ -363,12 +369,12 @@ class ChatApp(App):
                         chat_area = self.query_one("#chat-area", VerticalScroll)
                         self._current_md = Markdown(self._response_buf, classes="response")
                         await chat_area.mount(self._current_md)
-                        chat_area.scroll_end(animate=False)
+                        self._scroll_to_bottom_if_following()
                     else:
                         # Update existing response widget
                         self._current_md.update(self._response_buf)
                         chat_area = self.query_one("#chat-area", VerticalScroll)
-                        chat_area.scroll_end(animate=False)
+                        self._scroll_to_bottom_if_following()
                     self._last_event_type = "response"
 
                 case ToolStartEvent(tool_name=name, tool_input=inp):
@@ -405,11 +411,22 @@ class ChatApp(App):
             self._thinking_md = None
         self._thinking_buf = ""
 
+    def _on_chat_area_scroll_y_changed(self, scroll_y: float) -> None:
+        """Update auto-scroll flag based on scroll position."""
+        chat_area = self.query_one("#chat-area", VerticalScroll)
+        self._auto_scroll = (chat_area.max_scroll_y - scroll_y) <= 3
+
+    def _scroll_to_bottom_if_following(self) -> None:
+        """Scroll to bottom only when auto-scroll is active."""
+        if self._auto_scroll:
+            self.query_one("#chat-area", VerticalScroll).scroll_end(animate=False)
+
     def _mount_user_message(self, text: str) -> None:
         """Mount a user message in the chat area."""
         chat_area = self.query_one("#chat-area", VerticalScroll)
         widget = Static(text, classes="user-msg")
         chat_area.mount(widget)
+        self._auto_scroll = True
         chat_area.scroll_end(animate=False)
 
     def _mount_tool_call(self, name: str, inp: dict | str) -> None:
@@ -418,7 +435,7 @@ class ChatApp(App):
         text = f"⏺ {name}({_fmt_tool_input(inp)})"
         widget = Static(text, classes="tool-call")
         chat_area.mount(widget)
-        chat_area.scroll_end(animate=False)
+        self._scroll_to_bottom_if_following()
 
     def _mount_tool_output(self, result: str, fmt: str) -> None:
         """Mount tool output."""
@@ -434,7 +451,7 @@ class ChatApp(App):
                 return  # "none" format, don't display
         widget = Static(text, classes="tool-output")
         chat_area.mount(widget)
-        chat_area.scroll_end(animate=False)
+        self._scroll_to_bottom_if_following()
 
     def _mount_tool_error(self, name: str, error: str) -> None:
         """Mount a tool error message."""
@@ -442,7 +459,7 @@ class ChatApp(App):
         text = f"{name}: {error}"
         widget = Static(text, classes="tool-error")
         chat_area.mount(widget)
-        chat_area.scroll_end(animate=False)
+        self._scroll_to_bottom_if_following()
 
     def _mount_error(self, error: str) -> None:
         """Mount an error message."""
@@ -450,14 +467,14 @@ class ChatApp(App):
         text = f"Error: {error}"
         widget = Static(text, classes="tool-error")
         chat_area.mount(widget)
-        chat_area.scroll_end(animate=False)
+        self._scroll_to_bottom_if_following()
 
     def _mount_response(self, text: str) -> None:
         """Mount a response (markdown) to the chat area."""
         chat_area = self.query_one("#chat-area", VerticalScroll)
         widget = Markdown(_render_latex(text), classes="response")
         chat_area.mount(widget)
-        chat_area.scroll_end(animate=False)
+        self._scroll_to_bottom_if_following()
 
     def _print_header(self) -> None:
         """Mount a header message."""
@@ -489,28 +506,28 @@ class ChatApp(App):
         help_text = "\n".join(lines)
         widget = Static(help_text)
         chat_area.mount(widget)
-        chat_area.scroll_end(animate=False)
+        self._scroll_to_bottom_if_following()
 
     def _print_warning(self, text: str) -> None:
         """Print a warning message."""
         chat_area = self.query_one("#chat-area", VerticalScroll)
         widget = Static(f"[yellow]{text}[/yellow]")
         chat_area.mount(widget)
-        chat_area.scroll_end(animate=False)
+        self._scroll_to_bottom_if_following()
 
     def _print_dim_feedback(self, text: str) -> None:
         """Print dim feedback about a config change."""
         chat_area = self.query_one("#chat-area", VerticalScroll)
         widget = Static(f"[dim]{text}[/dim]")
         chat_area.mount(widget)
-        chat_area.scroll_end(animate=False)
+        self._scroll_to_bottom_if_following()
 
     def _print_system_feedback(self, text: str) -> None:
         """Print dim feedback about a config change."""
         chat_area = self.query_one("#chat-area", VerticalScroll)
         widget = Static(f"[dim orange]{text}[/dim orange]")
         chat_area.mount(widget)
-        chat_area.scroll_end(animate=False)
+        self._scroll_to_bottom_if_following()
 
 
 DEFAULT_CONFIG = Path.home() / ".ph" / "config.toml"

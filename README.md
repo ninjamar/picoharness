@@ -27,7 +27,7 @@ ph init
 ph chat
 ```
 
-The default config targets Ollama with `qwen3:2b` and enables all tools that don't require external services.
+The default config targets Ollama with `qwen3:4b` and enables all tools that don't require external services.
 
 > Using LM Studio or another OpenAI-compatible server? Set `provider` to `host:port` in your config instead (e.g., `localhost:1234`).
 
@@ -52,7 +52,7 @@ A **preset** is a named `[section]` in the TOML file — useful for keeping sepa
 
 ```toml
 [base]
-model = "qwen3:2b"           # Model identifier
+model = "qwen3:4b"           # Model identifier
 provider = "ollama"          # "ollama" or "host:port"
 think = false                # Enable chain-of-thought (for reasoning models)
 show_think = true            # Display thinking tokens in the UI
@@ -71,7 +71,7 @@ tools = [                    # Tools to enable (omit field = enable all)
 
 Multiple presets in one file are supported:
 ```bash
-ph --config config.toml --preset search_wikipedia
+ph chat --preset search_wikipedia
 ```
 
 ### Available Tools
