@@ -1,0 +1,354 @@
+general:
+  debug: false
+  instance_name: "SearXNG"
+  privacypolicy_url: false
+  donation_url: false
+  contact_url: false
+  enable_metrics: true
+  open_metrics: ''
+
+brand:
+  docs_url: https://docs.searxng.org/
+  public_instances: https://searx.space
+  wiki_url: https://github.com/searxng/searxng/wiki
+  issue_url: https://github.com/searxng/searxng/issues
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  autocomplete_min: 4
+  favicon_resolver: ""
+  default_lang: "auto"
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+  suspended_times:
+    SearxEngineAccessDenied: 180
+    SearxEngineCaptcha: 3600
+    SearxEngineTooManyRequests: 180
+    cf_SearxEngineCaptcha: 1296000
+    cf_SearxEngineAccessDenied: 86400
+    recaptcha_SearxEngineCaptcha: 604800
+  formats:
+    - html
+    - json
+
+server:
+  port: 8888
+  bind_address: "127.0.0.1"
+  base_url: false
+  limiter: false
+  public_instance: false
+  secret_key: "wGfTBt3kqshbMYLsJ9eMtlLFP1SKvPXx"
+  image_proxy: false
+  http_protocol_version: "1.0"
+  method: "POST"
+  default_http_headers:
+    X-Content-Type-Options: nosniff
+    X-Download-Options: noopen
+    X-Robots-Tag: noindex, nofollow
+    Referrer-Policy: no-referrer
+
+valkey:
+  url: false
+
+ui:
+  static_path: ""
+  templates_path: ""
+  query_in_title: false
+  default_theme: simple
+  center_alignment: false
+  default_locale: ""
+  theme_args:
+    simple_style: auto
+  search_on_category_select: true
+  hotkeys: default
+  url_formatting: pretty
+
+outgoing:
+  request_timeout: 5.0
+  useragent_suffix: ""
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+
+plugins:
+  searx.plugins.ahmia_filter.SXNGPlugin:
+    active: true
+
+  searx.plugins.hostnames.SXNGPlugin:
+    active: true
+
+  searx.plugins.tracker_url_remover.SXNGPlugin:
+    active: true
+
+  searx.plugins.oa_doi_rewrite.SXNGPlugin:
+    active: false
+
+  searx.plugins.tor_check.SXNGPlugin:
+    active: false
+
+  searx.plugins.infinite_scroll.SXNGPlugin:
+    active: false
+
+hostnames:
+  high_priority:
+    - '(.*\.)?wikipedia\.org$'
+    - '(.*\.)?reuters\.com$'
+    - '(.*\.)?bbc\.com$'
+    - '(.*\.)?arxiv\.org$'
+    - '(.*\.)?nature\.com$'
+    - '(.*\.)?ncbi\.nlm\.nih\.gov$'
+    - '(.*\.)?stackoverflow\.com$'
+    - '(.*\.)?semanticscholar\.org$'
+  remove:
+    - '(.*\.)?breitbart\.com$'
+    - '(.*\.)?infowars\.com$'
+    - '(.*\.)?naturalnews\.com$'
+    - '(.*\.)?thegatewaypundit\.com$'
+
+categories_as_tabs:
+  general:
+  news:
+  science:
+  it:
+
+engines:
+  # === GENERAL TAB (fires on all default LLM queries) ===
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    display_type: ["infobox"]
+    categories: [general]
+    weight: 2.0
+
+  - name: wikidata
+    engine: wikidata
+    shortcut: wd
+    timeout: 3.0
+    weight: 1.5
+    display_type: ["infobox"]
+    categories: [general]
+
+  - name: reuters
+    engine: reuters
+    shortcut: reu
+    categories: [general, news]
+    weight: 2.0
+
+  - name: brave
+    engine: brave
+    shortcut: br
+    time_range_support: true
+    paging: true
+    categories: [general, web]
+    brave_category: search
+    weight: 0.8
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    categories: [general]
+    weight: 0.5
+
+  # === NEWS TAB ===
+
+  - name: bing news
+    engine: bing_news
+    shortcut: bin
+    categories: [news]
+
+  - name: google news
+    engine: google_news
+    shortcut: gon
+    categories: [news]
+
+  - name: duckduckgo news
+    engine: duckduckgo_extra
+    categories: [news]
+    ddg_category: news
+    shortcut: ddn
+
+  - name: qwant
+    qwant_categ: web
+    engine: qwant
+    shortcut: qw
+    categories: []
+    disabled: true
+
+  - name: qwant news
+    qwant_categ: news
+    engine: qwant
+    shortcut: qwn
+    categories: [news]
+    network: qwant
+
+  - name: wikinews
+    engine: mediawiki
+    shortcut: wn
+    categories: [news, wikimedia]
+    base_url: "https://{language}.wikinews.org/"
+    search_type: text
+    srsort: create_timestamp_desc
+    about:
+      website: https://www.wikinews.org/
+      wikidata_id: Q964
+
+  - name: brave.news
+    engine: brave
+    network: brave
+    shortcut: brnews
+    categories: [news]
+    brave_category: news
+
+  - name: yahoo news
+    engine: yahoo_news
+    shortcut: yhn
+    categories: [news]
+
+  # === SCIENCE TAB ===
+
+  - name: arxiv
+    engine: arxiv
+    shortcut: arx
+    categories: [science]
+
+  - name: pubmed
+    engine: pubmed
+    shortcut: pub
+    categories: [science]
+
+  - name: semantic scholar
+    engine: semantic_scholar
+    shortcut: se
+    categories: [science]
+
+  - name: google scholar
+    engine: google_scholar
+    shortcut: gos
+    categories: [science]
+
+  - name: crossref
+    engine: crossref
+    shortcut: cr
+    timeout: 30
+    categories: [science]
+
+  - name: openairedatasets
+    engine: json_engine
+    paging: true
+    search_url: https://api.openaire.eu/search/datasets?format=json&page={pageno}&size=10&title={query}
+    results_query: response/results/result
+    url_query: metadata/oaf:entity/oaf:result/children/instance/webresource/url/$
+    title_query: metadata/oaf:entity/oaf:result/title/$
+    content_query: metadata/oaf:entity/oaf:result/description/$
+    content_html_to_text: true
+    categories: [science]
+    shortcut: oad
+    timeout: 5.0
+    about:
+      website: https://www.openaire.eu/
+      wikidata_id: Q25106053
+      official_api_documentation: https://api.openaire.eu/
+      use_official_api: false
+      require_api_key: false
+      results: JSON
+
+  - name: openairepublications
+    engine: json_engine
+    paging: true
+    search_url: https://api.openaire.eu/search/publications?format=json&page={pageno}&size=10&title={query}
+    results_query: response/results/result
+    url_query: metadata/oaf:entity/oaf:result/children/instance/webresource/url/$
+    title_query: metadata/oaf:entity/oaf:result/title/$
+    content_query: metadata/oaf:entity/oaf:result/description/$
+    content_html_to_text: true
+    categories: [science]
+    shortcut: oap
+    timeout: 5.0
+    about:
+      website: https://www.openaire.eu/
+      wikidata_id: Q25106053
+      official_api_documentation: https://api.openaire.eu/
+      use_official_api: false
+      require_api_key: false
+      results: JSON
+
+  # === IT TAB ===
+
+  - name: stackoverflow
+    engine: stackexchange
+    shortcut: st
+    api_site: 'stackoverflow'
+    categories: [it, q&a]
+
+  - name: askubuntu
+    engine: stackexchange
+    shortcut: ubuntu
+    api_site: 'askubuntu'
+    categories: [it, q&a]
+
+  - name: superuser
+    engine: stackexchange
+    shortcut: su
+    api_site: 'superuser'
+    categories: [it, q&a]
+
+  - name: mdn
+    shortcut: mdn
+    engine: json_engine
+    categories: [it]
+    paging: true
+    search_url: https://developer.mozilla.org/api/v1/search?q={query}&page={pageno}
+    results_query: documents
+    url_query: mdn_url
+    url_prefix: https://developer.mozilla.org
+    title_query: title
+    content_query: summary
+    about:
+      website: https://developer.mozilla.org
+      wikidata_id: Q3273508
+      official_api_documentation: null
+      use_official_api: false
+      require_api_key: false
+      results: JSON
+
+  - name: github
+    engine: github
+    shortcut: gh
+    categories: [it]
+
+  - name: pypi
+    shortcut: pypi
+    engine: pypi
+    categories: [it, packages]
+
+  - name: arch linux wiki
+    engine: archlinux
+    shortcut: al
+    categories: [it]
+
+  # === UTILITIES (no tab) ===
+
+  - name: currency
+    engine: currency_convert
+    shortcut: cc
+
+  - name: wiktionary
+    engine: mediawiki
+    shortcut: wt
+    categories: [dictionaries, wikimedia]
+    base_url: "https://{language}.wiktionary.org/"
+    search_type: text
+    about:
+      website: https://www.wiktionary.org/
+      wikidata_id: Q151
+
+doi_resolvers:
+  oadoi.org: 'https://oadoi.org/'
+  doi.org: 'https://doi.org/'
+  sci-hub.se: 'https://sci-hub.se/'
+  sci-hub.st: 'https://sci-hub.st/'
+  sci-hub.ru: 'https://sci-hub.ru/'
+
+default_doi_resolver: 'oadoi.org'

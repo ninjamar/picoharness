@@ -9,27 +9,6 @@ import uuid
 from pathlib import Path
 
 from pylatexenc.latex2text import LatexNodes2Text
-
-_latex_converter = LatexNodes2Text()
-
-
-def _render_latex(text: str) -> str:
-    def replace_block(m: re.Match) -> str:
-        try:
-            return f"\n```\n{_latex_converter.latex_to_text(m.group(1))}\n```\n"
-        except Exception:
-            return m.group(0)
-
-    def replace_inline(m: re.Match) -> str:
-        try:
-            return f"`{_latex_converter.latex_to_text(m.group(1))}`"
-        except Exception:
-            return m.group(0)
-
-    text = re.sub(r'\$\$(.*?)\$\$', replace_block, text, flags=re.DOTALL)
-    text = re.sub(r'\$(.*?)\$', replace_inline, text)
-    return text
-
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Markdown, Static
@@ -63,6 +42,26 @@ MAX_TOOL_OUTPUT = 500
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "files" / "system_prompt.md"
 UPDATE_INTERVAL = 0.05  # seconds between re-renders
 
+_latex_converter = LatexNodes2Text()
+
+
+def _render_latex(text: str) -> str:
+    def replace_block(m: re.Match) -> str:
+        try:
+            return f"\n```\n{_latex_converter.latex_to_text(m.group(1))}\n```\n"
+        except Exception:
+            return m.group(0)
+
+    def replace_inline(m: re.Match) -> str:
+        try:
+            return f"`{_latex_converter.latex_to_text(m.group(1))}`"
+        except Exception:
+            return m.group(0)
+
+    text = re.sub(r"\$\$(.*?)\$\$", replace_block, text, flags=re.DOTALL)
+    text = re.sub(r"\$(.*?)\$", replace_inline, text)
+    return text
+
 
 def _fmt_tool_input(inp: dict | str) -> str:
     if not isinstance(inp, dict):
@@ -84,7 +83,7 @@ class ChatApp(App):
 
     TITLE = "PicoHarness"
     CSS_PATH = "style.tcss"
-    theme = "nord" # type: ignore
+    theme = "nord"  # type: ignore
 
     BINDINGS = []
 

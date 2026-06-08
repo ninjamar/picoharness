@@ -178,3 +178,6 @@ pyrightconfig.json
 .vscode
 reader/
 searxng/
+
+!frontend/services/searxng
+!frontend/services/searxng/.env
