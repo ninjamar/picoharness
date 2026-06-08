@@ -9,7 +9,7 @@ description = "Local LLM agent with optional Docker-based services"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "aiohttp>=3.13.5",
+    "aiohttp>=3.14.0",
     "jinja2>=3.1.6",
     "ollama>=0.6.1",
     "openai>=2.32.0",
