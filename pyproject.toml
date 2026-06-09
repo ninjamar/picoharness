@@ -17,6 +17,7 @@ dependencies = [
     "pylatexenc>=2.10",
     "textual>=8.2.7",
     "tomlkit>=0.11",
+    "typer>=0.26.7",
     "wikipedia-api>=0.7",
 ]
 

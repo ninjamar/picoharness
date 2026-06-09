@@ -186,6 +186,20 @@ FIELDS: list[FieldDef] = [
         show=False,
     ),
     FieldDef(
+        name="summarizer_model",
+        type=str | None,
+        default=None,
+        description="Model for summarization tools (uses main model if unset). Recommended: qwen2.5:1.5b",
+        config_comment="Fast local model for webpage summarization. Pull with: ollama pull qwen2.5:1.5b",
+        commented_by_default=True,
+        menu=TextInputMenu(
+            get_current=lambda f: f.api.summarizer_model or "",
+            set_current=lambda f, v: f.api.set_summarizer_model(v if v else None),
+            nullable=True,
+        ),
+        show=False,
+    ),
+    FieldDef(
         name="api_key",
         type=str | None,
         default=None,
@@ -196,6 +210,17 @@ FIELDS: list[FieldDef] = [
             get_current=lambda f: f.api.api_key or "",
             set_current=lambda f, v: f.api.set_api_key(v if v else None),
             nullable=True,
+        ),
+        show=False,
+    ),
+    FieldDef(
+        name="session_save_location",
+        type=str,
+        default="~/.ph/sessions/",
+        description="Directory where chat sessions are saved",
+        menu=TextInputMenu(
+            get_current=lambda f: str(f.api.session_manager.save_dir),
+            set_current=lambda f, v: f.api.set_session_save_location(v),
         ),
         show=False,
     ),

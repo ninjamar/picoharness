@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from backend.api import BackendAPI
 
+from backend.agent import Agent
 from backend.events import (
     DoneEvent,
     Event,
@@ -20,7 +21,7 @@ from backend.events import (
     ToolStartEvent,
     UserInputEvent,
 )
-from backend.provider import BaseProvider
+from backend.provider import BaseProvider, OllamaProvider, OpenAICompatibleProvider
 from backend.system_prompt import format_system_prompt
 from backend.tools import BaseTool
 from backend.tools.web.browse import close_session
@@ -51,23 +52,33 @@ class MessageStore:
         self.messages = []
         self.trimmed = []
         self.actual_size = 0
-        self.total_size = 0
+        self._trimmed_out_tokens = 0
+
+    @property
+    def total_size(self) -> int:
+        return self.actual_size + self._trimmed_out_tokens
 
     def append(self, item):
         self.messages.append(item)
         self.trimmed.append(item)
 
     def set_actual_size(self, size: int) -> None:
-        self.total_size += size - self.actual_size
-
         self.actual_size = size
 
     def trim(self) -> None:
-        while self.actual_size > self.max_size:
-            for idx, msg in enumerate(self.trimmed):
-                if msg["role"] != "system":
-                    del self.trimmed[idx]
-                    break
+        if self.actual_size <= self.max_size:
+            return
+        non_system = [i for i, m in enumerate(self.trimmed) if m["role"] != "system"]
+        if not non_system:
+            return
+        # Remove enough oldest non-system messages proportionally to fit within max_size
+        fraction_over = (self.actual_size - self.max_size) / self.actual_size
+        n_to_remove = max(1, int(len(self.trimmed) * fraction_over))
+        n_to_remove = min(n_to_remove, len(non_system))
+        if self.trimmed:
+            self._trimmed_out_tokens += int(self.actual_size / len(self.trimmed) * n_to_remove)
+        remove_set = set(non_system[:n_to_remove])
+        self.trimmed = [m for i, m in enumerate(self.trimmed) if i not in remove_set]
 
 
 class Backend:
@@ -82,12 +93,14 @@ class Backend:
         system_prompt_path: str | None = None,
         searxng_url: str | None = None,
         jina_reader_url: str | None = None,
+        summarizer_agent: Agent | None = None,
     ) -> None:
         self._provider = provider
         self._model = model
         self._think = think
         self._system_prompt_path = system_prompt_path
         self._tool_config = _ToolConfig(searxng_url=searxng_url, jina_reader_url=jina_reader_url)
+        self._summarizer_agent = summarizer_agent
 
         self._enabled_tools_override: list[str] = []
         self._tool_classes: list[type[BaseTool]] = tools or []
@@ -107,6 +120,11 @@ class Backend:
 
     @classmethod
     def from_config(cls, api: BackendAPI) -> Backend:
+        summarizer_agent = None
+        if api.summarizer_model:
+            summary_provider = cls._build_summarizer_provider(api.provider, api.api_key)
+            summarizer_agent = Agent.for_single_task(summary_provider, api.summarizer_model)
+
         return cls(
             provider=api.provider,
             model=api.model,
@@ -116,10 +134,23 @@ class Backend:
             system_prompt_path=api.system_prompt_path,
             searxng_url=api.searxng_url,
             jina_reader_url=api.jina_reader_url,
+            summarizer_agent=summarizer_agent,
         )
 
+    @staticmethod
+    def _build_summarizer_provider(provider: BaseProvider, api_key: str) -> BaseProvider:
+        if isinstance(provider, OllamaProvider):
+            return OllamaProvider()
+        elif isinstance(provider, OpenAICompatibleProvider):
+            base_url = str(provider.client.base_url)
+            return OpenAICompatibleProvider(base_url=base_url, api_key=api_key)
+        raise ValueError(f"Unknown provider type: {type(provider)}")
+
     async def __aenter__(self) -> Backend:
-        init_tasks = [asyncio.create_task(self._init_tool(cls, self._tool_config)) for cls in self._tool_classes]
+        init_tasks = [
+            asyncio.create_task(self._init_tool(cls, self._tool_config, self._summarizer_agent))
+            for cls in self._tool_classes
+        ]
         self._tool_instances = list(await asyncio.gather(*init_tasks))
         self._process_task = asyncio.create_task(self._process_loop())
         return self
@@ -135,14 +166,20 @@ class Backend:
         await self._event_queue.put(_SENTINEL)  # type: ignore
 
     @staticmethod
-    async def _init_tool(tool_cls: type[BaseTool], config: _ToolConfig) -> BaseTool:
+    async def _init_tool(tool_cls: type[BaseTool], config: _ToolConfig, agent: Agent | None = None) -> BaseTool:
         import dataclasses
 
-        return tool_cls(**dataclasses.asdict(config))
+        kwargs = dataclasses.asdict(config)
+        if agent is not None:
+            kwargs["summarizer_agent"] = agent
+        return tool_cls(**kwargs)
 
     def _reinstantiate_tools(self) -> None:
         async def _do_instantiate() -> None:
-            init_tasks = [asyncio.create_task(self._init_tool(cls, self._tool_config)) for cls in self._tool_classes]
+            init_tasks = [
+                asyncio.create_task(self._init_tool(cls, self._tool_config, self._summarizer_agent))
+                for cls in self._tool_classes
+            ]
             self._tool_instances = list(await asyncio.gather(*init_tasks))
 
         # try:
@@ -256,7 +293,7 @@ class Backend:
                 results: dict[str, str] = {}
                 for coro in asyncio.as_completed(tasks):
                     tool_id, name, output, error, output_format = await coro
-                    if error:
+                    if error:  # TODO: Error isn't always given...?
                         results[tool_id] = f"Error: {error}"
                         await self._event_queue.put(
                             ToolErrorEvent(id=input_id, tool_id=tool_id, tool_name=name, error=error)

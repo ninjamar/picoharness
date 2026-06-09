@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import argparse
 import asyncio
 import re
 import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Literal, Optional
 
+import typer
 from pylatexenc.latex2text import LatexNodes2Text
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
@@ -17,6 +18,7 @@ from backend.api import (
     ALL_TOOLS,
     BackendAPI,
     DoneEvent,
+    Event,
     ResponseEvent,
     ThinkingEvent,
     ToolErrorEvent,
@@ -25,7 +27,9 @@ from backend.api import (
     UserInputEvent,
 )
 from backend.provider import OllamaProvider, OpenAICompatibleProvider
+from backend.sessions import SessionManager
 from frontend.config_io import generate_config, load_config
+from frontend.doctor_cmd import doctor_main
 from frontend.schema import (
     CUSTOM_PROVIDER_LABEL,
     FIELDS_SHOW_UI,
@@ -41,6 +45,7 @@ from frontend.widgets import CommandPanel, CompletionMenu, InputArea
 MAX_TOOL_OUTPUT = 500
 SYSTEM_PROMPT_PATH = Path(__file__).parent / "files" / "system_prompt.md"
 UPDATE_INTERVAL = 0.05  # seconds between re-renders
+SESSION_PICKER_PREVIEW_LENGTH = 60
 
 _latex_converter = LatexNodes2Text()
 
@@ -87,10 +92,18 @@ class ChatApp(App):
 
     BINDINGS = []
 
-    def __init__(self, api: BackendAPI, show_think: bool = True, **kwargs):
+    def __init__(
+        self,
+        api: BackendAPI,
+        show_think: bool = True,
+        show_picker: bool = False,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.api = api
         self.show_think = show_think
+        self.show_picker = show_picker
+        self.session_name = ""
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -120,12 +133,18 @@ class ChatApp(App):
         self._auto_scroll: bool = True  # Auto-scroll active when True
         self._response_dirty: bool = False
         self._thinking_dirty: bool = False
+        self._last_response_buf: str = ""
+        self._last_thinking_buf: str = ""
         self._working_dots: int = 0  # Cycles through 0, 1, 2, 3
 
         # Populate the completion menu with all commands
         completion_menu = self.query_one("#completion", CompletionMenu)
         all_commands = [(f"/{f.name}", f.description) for f in FIELDS_SHOW_UI]
-        all_commands += [("/help", "Show help"), ("/quit", "Exit")]
+        all_commands += [
+            ("/name", "Rename the current session"),
+            ("/help", "Show help"),
+            ("/quit", "Exit"),
+        ]
         completion_menu.set_commands(all_commands)
 
         input_area = self.query_one("#input-area", InputArea)
@@ -141,10 +160,57 @@ class ChatApp(App):
         self.set_interval(UPDATE_INTERVAL, self._flush_pending_updates)
 
         self._print_header()
-        self._start_event_loop_worker()
+
+        if self.show_picker:
+
+            async def show_session_picker():
+                command_panel = self.query_one("#command-panel", CommandPanel)
+                sessions = await asyncio.to_thread(self.api.session_manager.list_sessions)
+
+                self._session_pick_map: dict[str, str | None] = {"+ New Chat": None}
+                for s in sessions:
+                    preview = (
+                        s.first_user_message[:SESSION_PICKER_PREVIEW_LENGTH] if s.first_user_message else "(empty)"
+                    )
+                    label = f"{s.name}  —  {preview}"
+                    self._session_pick_map[label] = s.name
+
+                self._pending_session_pick = True
+                await command_panel.show_choice(list(self._session_pick_map.keys()), None, "Select session")
+
+            self.run_worker(show_session_picker())
+        else:
+
+            async def start_new():
+                self.api.start_session()
+                self.session_name = ""
+                self._start_event_loop_worker()
+
+            self.run_worker(start_new())
+
+    def _on_session_selected(self, session_name: str | None) -> None:
+        """Handle session selection."""
+
+        async def load_and_start():
+            if session_name:
+                events = await self.api.resume_session(session_name)
+                self.session_name = session_name
+                await self._replay_session(events)
+                await asyncio.sleep(0.1)
+                self.query_one("#chat-area", VerticalScroll).scroll_end(animate=False)
+            else:
+                self.api.start_session()
+                self.session_name = ""
+            self._start_event_loop_worker()
+
+        self.run_worker(load_and_start())
 
     def set_show_think(self, value: bool) -> None:
         self.show_think = value
+
+    def exit(self, *args, **kwargs):
+        super().exit()
+        self.api.finalize()
 
     def action_help_quit(self) -> None:
         # Overrides a builtin...
@@ -214,6 +280,29 @@ class ChatApp(App):
         command_panel = self.query_one("#command-panel", CommandPanel)
         input_area = self.query_one("#input-area", InputArea)
 
+        # Handle session picker
+        if getattr(self, "_pending_session_pick", False):
+            self._pending_session_pick = False
+            command_panel.hide()
+            session_name = self._session_pick_map.get(msg.value) if msg.value else None
+            self._on_session_selected(session_name)
+            input_area.focus()
+            return
+
+        # Handle session rename
+        if hasattr(self, "_pending_rename") and self._pending_rename:
+            self._pending_rename = False
+            command_panel.hide()
+            if msg.value:
+                try:
+                    self.api.rename_session(self.session_name, msg.value)
+                    self.session_name = msg.value
+                    self._print_dim_feedback(f"Session renamed to {msg.value!r}")
+                except FileExistsError:
+                    self._print_warning(f"Session '{msg.value}' already exists")
+            input_area.focus()
+            return
+
         if not hasattr(self, "_pending_field"):
             command_panel.hide()
             input_area.focus()
@@ -259,6 +348,18 @@ class ChatApp(App):
 
         if cmd == "help":
             self._show_help()
+            return
+
+        if cmd == "name":
+            if arg:
+                try:
+                    self.api.rename_session(self.session_name, arg)
+                    self.session_name = arg
+                    self._print_dim_feedback(f"Session renamed to {arg!r}")
+                except FileExistsError:
+                    self._print_warning(f"Session '{arg}' already exists")
+            else:
+                await self._show_name_input()
             return
 
         field_map = {f.name: f for f in FIELDS_SHOW_UI}
@@ -334,22 +435,28 @@ class ChatApp(App):
             current=None, nullable=False, label="Enter provider URL (e.g., http://localhost:8000)"
         )
 
+    async def _show_name_input(self) -> None:
+        """Show text input for renaming the session."""
+        command_panel = self.query_one("#command-panel", CommandPanel)
+        self._pending_rename = True
+        await command_panel.show_text_input(current=self.session_name, nullable=False, label="Enter new session name")
+
     def _start_event_loop_worker(self) -> None:
         """Start background worker for streaming responses."""
         self.run_worker(self._event_loop(), exclusive=True)
 
-    async def _event_loop(self) -> None:
-        """Background task to consume and render streaming events."""
-        # This event loop runs forever
-        async for event in self.api.stream_events():
+    async def _handle_event(self, event: Event, is_replay: bool = False) -> None:
+        try:
             match event:
-                case UserInputEvent():
-                    pass  # User message already mounted
+                case UserInputEvent(text=text):
+                    if is_replay:
+                        self._mount_user_message(text)
 
                 case ThinkingEvent(fragment=fragment):
                     # if not self._generating:
-                    self._generating = True
-                    self._update_status_bar()
+                    if not is_replay:
+                        self._generating = True
+                        self._update_status_bar()
                     if self.show_think:
                         self._thinking_buf += fragment
                         if self._thinking_md is None:
@@ -363,8 +470,9 @@ class ChatApp(App):
 
                 case ResponseEvent(fragment=fragment):
                     # if not self._generating:
-                    self._generating = True
-                    self._update_status_bar()
+                    if not is_replay:
+                        self._generating = True
+                        self._update_status_bar()
                     # Reset thinking if transitioning from thinking to response
                     if self._last_event_type == "thinking":
                         self._thinking_buf = ""
@@ -382,9 +490,12 @@ class ChatApp(App):
                     self._last_event_type = "response"
 
                 case ToolStartEvent(tool_name=name, tool_input=inp):
+                    if not is_replay:
+                        self._update_status_bar()
+
                     self._generating = True
                     # Finalize current response/thinking
-                    self._reset_response()
+                    await self._reset_response()
                     self._reset_thinking()
                     self._mount_tool_call(name, inp)
 
@@ -395,30 +506,57 @@ class ChatApp(App):
                     self._mount_tool_error(name, error)
 
                 case DoneEvent(error=error):
-                    self._generating = False
-                    self.sub_title = ""
-                    self._update_status_bar()
-                    # Finalize any remaining response/thinking
-                    self._reset_response()
-                    self._reset_thinking()
+                    await self._finish_generating()
                     if error:
                         self._mount_error(error)
+        except Exception as e:
+            self._mount_error(f"Internal error: {e}")
+
+    async def _event_loop(self) -> None:
+        """Background task to consume and render streaming events."""
+        try:
+            async for event in self.api.stream_events():
+                await self._handle_event(event)
+        except Exception as e:
+            if self._generating:
+                self._mount_error(f"Stream error: {e}")
+        finally:
+            await self._finish_generating()
 
     def _flush_pending_updates(self) -> None:
         """Flush throttled widget updates at UPDATE_INTERVAL cadence."""
         if self._response_dirty and self._current_md is not None:
-            self._current_md.update(self._response_buf)
+            if self._response_buf != self._last_response_buf:
+                self._current_md.update(self._response_buf)
+                self._last_response_buf = self._response_buf
+                self._scroll_to_bottom_if_following()
             self._response_dirty = False
-            self._scroll_to_bottom_if_following()
         if self._thinking_dirty and self._thinking_md is not None:
-            self._thinking_md.update(self._thinking_buf)
+            if self._thinking_buf != self._last_thinking_buf:
+                self._thinking_md.update(self._thinking_buf)
+                self._last_thinking_buf = self._thinking_buf
+                self._scroll_to_bottom_if_following()
             self._thinking_dirty = False
-            self._scroll_to_bottom_if_following()
 
-    def _reset_response(self) -> None:
+    async def _finish_generating(self) -> None:
+        """Reset all generation state. Safe to call even if not currently generating."""
+        if not self._generating:
+            return
+        self._generating = False
+        self.sub_title = ""
+        self._update_status_bar()
+        await self._reset_response()
+        self._reset_thinking()
+        try:
+            self.query_one("#input-area", InputArea).focus()
+        except Exception:
+            pass
+
+    async def _reset_response(self) -> None:
         """Finalize and clear response accumulator."""
         if self._current_md is not None:
-            self._current_md.update(_render_latex(self._response_buf))
+            rendered = await asyncio.to_thread(_render_latex, self._response_buf)
+            self._current_md.update(rendered)
             self._current_md = None
         self._response_buf = ""
         self._response_dirty = False
@@ -444,6 +582,8 @@ class ChatApp(App):
         """Update the status bar with context window and generation status."""
         trimmed, max_ctx, total_size = self.api.context_window
         status = f"total: {total_size} | context window: {trimmed}/{max_ctx}"
+        if self.session_name:
+            status += f" | session: {self.session_name}"
         if self._generating:
             dots = "." * self._working_dots
             status += f" | working{dots}"
@@ -513,6 +653,25 @@ class ChatApp(App):
         hint = Static("[dim]Ctrl+C to interrupt/exit · /help for commands[/dim]", id="hint")
         chat_area.mount(hint)
 
+    async def _replay_session(self, events: list[Event]) -> None:
+        """Replay session events into the chat area."""
+        for i, event in enumerate(events):
+            await self._handle_event(event, is_replay=True)
+            if i % 10 == 9:
+                await asyncio.sleep(0)
+
+        self._current_md = None
+        self._response_buf = ""
+        self._thinking_md = None
+        self._thinking_buf = ""
+        self._last_event_type = None
+        self._generating = False
+        self._response_dirty = False
+        self._thinking_dirty = False
+        self._last_response_buf = ""
+        self._last_thinking_buf = ""
+        self._update_status_bar()
+
     def _show_help(self) -> None:
         """Display help message."""
         chat_area = self.query_one("#chat-area", VerticalScroll)
@@ -529,6 +688,7 @@ class ChatApp(App):
             else:
                 usage = f"/{field.name} [value]"
             lines.append(f"  [cyan]/{field.name}[/cyan]  {field.description}  [dim]{usage}[/dim]")
+        lines.append("  [cyan]/name[/cyan]  Rename the current session  [dim]/name <new-name>[/dim]")
         lines.append("  [cyan]/help[/cyan]  Show this message")
         lines.append("  [cyan]/quit[/cyan]  Exit")
 
@@ -561,30 +721,23 @@ class ChatApp(App):
 
 DEFAULT_CONFIG = Path.home() / ".ph" / "config.toml"
 
-
-def _cmd_init(args: argparse.Namespace) -> None:
-    path = Path(args.path) if args.path else DEFAULT_CONFIG
-    if path.exists():
-        answer = input(f"{path} already exists. Overwrite? [y/N] ").strip().lower()
-        if answer != "y":
-            print("Aborted.")
-            return
-    generate_config(path)
+app = typer.Typer(help="PicoHarness — local LLM agent TUI", add_completion=False)
 
 
-def _cmd_chat(args: argparse.Namespace) -> None:
-    config_path = Path(args.config) if args.config else DEFAULT_CONFIG
-    if not config_path.exists():
-        raise SystemExit(f"Config not found: {config_path}\nRun `ph init` to create one.")
+def _load_config(config_path: Optional[str], preset: Optional[str]):
+    path = Path(config_path) if config_path else DEFAULT_CONFIG
+    if not path.exists():
+        raise typer.Exit(f"Config not found: {path}\nRun `ph init` to create one.", code=1)
+    return load_config(path, preset)
 
-    cfg = load_config(config_path, args.preset)
 
+def _build_api(cfg, session_manager: SessionManager) -> BackendAPI:
     tool_name_map: dict[str, type] = {tool.name: tool for tool in ALL_TOOLS}
     tools = []
     tool_names = cfg.tools if cfg.tools else list(tool_name_map.keys())
     for name in tool_names:
         if name not in tool_name_map:
-            raise SystemExit(f"Unknown tool '{name}'. Valid: {list(tool_name_map.keys())}")
+            raise typer.Exit(f"Unknown tool '{name}'. Valid: {list(tool_name_map.keys())}", code=1)
         tools.append(tool_name_map[name])
 
     provider = (
@@ -598,7 +751,7 @@ def _cmd_chat(args: argparse.Namespace) -> None:
     if prompt_path.exists():
         system_prompt = prompt_path.read_text()
 
-    api = BackendAPI(
+    return BackendAPI(
         provider=provider,
         model=cfg.model,
         think=cfg.think,
@@ -609,68 +762,60 @@ def _cmd_chat(args: argparse.Namespace) -> None:
         api_key=cfg.api_key or "",
         searxng_url=cfg.searxng_url,
         jina_reader_url=cfg.jina_reader_url,
+        summarizer_model=cfg.summarizer_model,
+        session_manager=session_manager,
     )
 
-    async def run_app():
+
+@app.command()
+def init(path: Optional[str] = typer.Argument(None, help="Config file path")):
+    """Write a sample config file."""
+    config_path = Path(path) if path else DEFAULT_CONFIG
+    if config_path.exists():
+        if not typer.confirm(f"{config_path} already exists. Overwrite?"):
+            typer.echo("Aborted.")
+            raise typer.Exit()
+    generate_config(config_path)
+
+
+@app.command()
+def chat(
+    config: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+    preset: Optional[str] = typer.Argument(None, help="Config preset"),
+    resume: bool = typer.Option(False, "--resume", help="Resume an existing session"),
+):
+    """Start the TUI chat interface."""
+    cfg = _load_config(config, preset)
+    session_manager = SessionManager(Path(cfg.session_save_location).expanduser())
+    api = _build_api(cfg, session_manager)
+
+    async def run_chat():
         async with api:
-            app = ChatApp(api=api, show_think=cfg.show_think)
-            await app.run_async()
+            chat_app = ChatApp(api=api, show_think=cfg.show_think, show_picker=resume)
+            await chat_app.run_async()
 
-    asyncio.run(run_app())
+    asyncio.run(run_chat())
 
 
-def _cmd_service(args: argparse.Namespace) -> None:
-    if args.action == "start":
+@app.command()
+def service(action: Literal["start", "stop"] = typer.Argument(..., help="Action to perform")):
+    """Start or stop Docker services."""
+    if action == "start":
         services_main(["up", "-d"])
     else:
         services_main(["down"])
 
 
-def _cmd_doctor(args: argparse.Namespace) -> None:
-    from frontend.doctor_cmd import doctor_main
-
-    config_path = Path(args.config) if args.config else DEFAULT_CONFIG
-    if not config_path.exists():
-        raise SystemExit(f"Config not found: {config_path}\nRun `ph init` to create one.")
-    sys.exit(doctor_main(config_path, args.preset))
+@app.command()
+def doctor(
+    config: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path"),
+    preset: Optional[str] = typer.Argument(None, help="Config preset"),
+):
+    """Check that provider is reachable."""
+    _load_config(config, preset)
+    config_path = Path(config) if config else DEFAULT_CONFIG
+    sys.exit(asyncio.run(doctor_main(config_path, preset)))
 
 
 def cli() -> None:
-    parser = argparse.ArgumentParser(prog="ph", description="PicoHarness — local LLM agent TUI")
-    parser.add_argument(
-        "--config",
-        "-c",
-        metavar="PATH",
-        default=None,
-        help="Override config path (default: ~/.ph/config.toml)",
-    )
-
-    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
-    sub.required = True
-
-    p_init = sub.add_parser("init", help="Write a sample config file")
-    p_init.add_argument("path", nargs="?", default=None, metavar="PATH")
-
-    p_chat = sub.add_parser("chat", help="Start the TUI chat interface")
-    p_chat.add_argument("preset", nargs="?", default=None, metavar="PRESET")
-
-    p_service = sub.add_parser("service", help="Start or stop Docker services")
-    p_service.add_argument("action", choices=["start", "stop"], metavar="start|stop")
-
-    p_doctor = sub.add_parser("doctor", help="Check that provider is reachable")
-    p_doctor.add_argument("preset", nargs="?", default=None, metavar="PRESET")
-
-    if len(sys.argv) == 1:
-        parser.print_help()
-        return
-    args = parser.parse_args()
-
-    match args.command:
-        case "init":
-            _cmd_init(args)
-        case "chat":
-            _cmd_chat(args)
-        case "service":
-            _cmd_service(args)
-        case "doctor":
-            _cmd_doctor(args)
+    app()

@@ -42,6 +42,8 @@ def generate_config(path: Path) -> None:
         "search_web": "SearXNG",
         "search_and_read_web": "SearXNG",
         "read_webpage": "Jina Reader",
+        "summarize_webpage": "Jina Reader",
+        "search_and_summarize_web": "Jina Reader",
     }
 
     doc = tomlkit.document()

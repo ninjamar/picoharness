@@ -6,6 +6,8 @@ from typing import Any
 import ollama
 from openai import AsyncOpenAI
 
+STREAM_TIMEOUT = 120
+
 
 @dataclass
 class _ToolCallFunction:
@@ -68,11 +70,9 @@ class BaseProvider:
 class OllamaProvider(BaseProvider):
     def __init__(self) -> None:
         super().__init__()
-        self.client = ollama.AsyncClient()
+        self.client = ollama.AsyncClient(timeout=STREAM_TIMEOUT)
 
     async def chat(self, model: str, messages: list[dict[str, Any]], think: bool) -> AsyncGenerator[_ChatResponse]:
-
-        assert self.tool_schemas is not None
 
         async for part in await self.client.chat(
             model=model,
@@ -93,7 +93,7 @@ class OllamaProvider(BaseProvider):
                     thinking=part.message.thinking,
                     tool_calls=tool_calls,
                 ),
-                token_count=(part.prompt_eval_count or 0) + (part.eval_count or 0),
+                token_count=(part.prompt_eval_count or 0),
             )
 
     async def list_models(self) -> list[ModelInfo]:
@@ -111,7 +111,7 @@ class OllamaProvider(BaseProvider):
 class OpenAICompatibleProvider(BaseProvider):
     def __init__(self, base_url: str, api_key: str = "") -> None:
         super().__init__()
-        self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=STREAM_TIMEOUT)
 
     async def chat(self, model: str, messages: list[dict[str, Any]], think: bool) -> AsyncGenerator[_ChatResponse]:
 
@@ -143,7 +143,7 @@ class OpenAICompatibleProvider(BaseProvider):
             model=model,
             messages=serialized_messages,
             stream=True,
-            tools=self.tool_schemas,
+            tools=self.tool_schemas,  # type: ignore
             reasoning_effort="high" if think else "none",
             max_completion_tokens=self.context_length,
         ):
@@ -152,7 +152,7 @@ class OpenAICompatibleProvider(BaseProvider):
                 continue
             # print(delta)
 
-            token_count = (chunk.input_tokens or 0) + (chunk.output_tokens or 0)
+            token_count = chunk.input_tokens or 0
             thinking = (
                 getattr(delta, "reasoning_content", None)
                 or getattr(delta, "reasoning", None)

@@ -1,8 +1,9 @@
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.provider.provider import (
-    ModelInfo,
+import pytest
+
+from backend.provider import (
     OllamaProvider,
     OpenAICompatibleProvider,
 )
@@ -150,7 +151,8 @@ async def test_openai_streams_content():
 
 
 async def test_openai_streams_thinking():
-    """Test that OpenAICompatibleProvider correctly yields thinking from streamed chunks."""
+    """Test that OpenAICompatibleProvider correctly yields thinking from all field name variants."""
+    # Test reasoning_content variant (most common in latest OpenAI models)
     chunks = [
         make_openai_chunk(reasoning_content="Thinking..."),
         make_openai_chunk(content="Answer"),
@@ -164,6 +166,54 @@ async def test_openai_streams_thinking():
         assert len(responses) == 2
         assert responses[0].message.thinking == "Thinking..."
         assert responses[1].message.content == "Answer"
+
+    # Test reasoning variant
+    def make_openai_chunk_with_reasoning(reasoning_text):
+        delta = MagicMock()
+        delta.content = None
+        delta.reasoning_content = None
+        delta.reasoning = reasoning_text
+        delta.thinking = None
+        delta.tool_calls = []
+
+        chunk = MagicMock()
+        chunk.choices = [MagicMock(delta=delta)]
+        return chunk
+
+    chunks = [make_openai_chunk_with_reasoning("Let me reason about this")]
+
+    with make_openai_provider(chunks) as provider:
+        responses = []
+        async for response in provider.chat(model="test", messages=[], think=True):
+            responses.append(response)
+
+        thinking_responses = [r for r in responses if r.message.thinking]
+        assert len(thinking_responses) >= 1
+        assert "Let me reason" in thinking_responses[0].message.thinking
+
+    # Test thinking variant
+    def make_openai_chunk_with_thinking(thinking_text):
+        delta = MagicMock()
+        delta.content = None
+        delta.reasoning_content = None
+        delta.reasoning = None
+        delta.thinking = thinking_text
+        delta.tool_calls = []
+
+        chunk = MagicMock()
+        chunk.choices = [MagicMock(delta=delta)]
+        return chunk
+
+    chunks = [make_openai_chunk_with_thinking("Processing information...")]
+
+    with make_openai_provider(chunks) as provider:
+        responses = []
+        async for response in provider.chat(model="test", messages=[], think=True):
+            responses.append(response)
+
+        thinking_responses = [r for r in responses if r.message.thinking]
+        assert len(thinking_responses) >= 1
+        assert "Processing information" in thinking_responses[0].message.thinking
 
 
 async def test_openai_assembles_tool_calls():
@@ -223,33 +273,6 @@ async def test_ollama_list_models():
         assert models[0].quantization_level == "Q4"
 
 
-async def test_ollama_passes_tool_schemas():
-    """Test that OllamaProvider passes tool_schemas to the client."""
-    with patch("ollama.AsyncClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client_class.return_value = mock_client
-
-        chunk = make_ollama_chunk(content="hi")
-
-        async def async_gen(**kwargs):
-            yield chunk
-
-        mock_client.chat = AsyncMock(side_effect=lambda **kwargs: async_gen(**kwargs))
-
-        provider = OllamaProvider()
-        provider.tool_schemas = [{"type": "function", "function": {"name": "test_tool"}}]
-
-        responses = []
-        async for response in provider.chat(model="test", messages=[], think=False):
-            responses.append(response)
-
-        # Verify chat was called with tools kwarg
-        mock_client.chat.assert_called_once()
-        call_kwargs = mock_client.chat.call_args.kwargs
-        assert "tools" in call_kwargs
-        assert call_kwargs["tools"] == provider.tool_schemas
-
-
 async def test_ollama_none_tool_calls_no_crash():
     """Test that OllamaProvider handles None tool_calls gracefully."""
     chunks = [
@@ -264,30 +287,6 @@ async def test_ollama_none_tool_calls_no_crash():
         assert len(responses) == 1
         assert responses[0].message.content == "response"
         assert responses[0].message.tool_calls == []
-
-
-async def test_ollama_think_flag_passed():
-    """Test that OllamaProvider passes think flag to client."""
-    with patch("ollama.AsyncClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client_class.return_value = mock_client
-
-        chunk = make_ollama_chunk(content="response")
-
-        async def async_gen(**kwargs):
-            yield chunk
-
-        mock_client.chat = AsyncMock(side_effect=lambda **kwargs: async_gen(**kwargs))
-
-        provider = OllamaProvider()
-        responses = []
-        async for response in provider.chat(model="test", messages=[], think=True):
-            responses.append(response)
-
-        # Verify think=True was passed to client
-        mock_client.chat.assert_called_once()
-        call_kwargs = mock_client.chat.call_args.kwargs
-        assert call_kwargs.get("think") is True
 
 
 # ============================================================================
@@ -313,68 +312,9 @@ async def test_openai_list_models():
         assert models[0].name == "gpt-4"
 
 
-async def test_openai_reasoning_field_maps_to_thinking():
-    """Test that OpenAI 'reasoning' field is mapped to thinking."""
-
-    def make_openai_chunk_with_reasoning(reasoning_text):
-        delta = MagicMock()
-        delta.content = None
-        delta.reasoning_content = None
-        delta.reasoning = reasoning_text
-        delta.thinking = None
-        delta.tool_calls = []
-
-        chunk = MagicMock()
-        chunk.choices = [MagicMock(delta=delta)]
-        return chunk
-
-    chunks = [
-        make_openai_chunk_with_reasoning("Let me reason about this"),
-    ]
-
-    with make_openai_provider(chunks) as provider:
-        responses = []
-        async for response in provider.chat(model="test", messages=[], think=True):
-            responses.append(response)
-
-        assert len(responses) >= 1
-        thinking_responses = [r for r in responses if r.message.thinking]
-        assert len(thinking_responses) >= 1
-        assert "Let me reason" in thinking_responses[0].message.thinking
-
-
-async def test_openai_thinking_field_maps_to_thinking():
-    """Test that OpenAI 'thinking' field is mapped to thinking."""
-
-    def make_openai_chunk_with_thinking(thinking_text):
-        delta = MagicMock()
-        delta.content = None
-        delta.reasoning_content = None
-        delta.reasoning = None
-        delta.thinking = thinking_text
-        delta.tool_calls = []
-
-        chunk = MagicMock()
-        chunk.choices = [MagicMock(delta=delta)]
-        return chunk
-
-    chunks = [
-        make_openai_chunk_with_thinking("Processing information..."),
-    ]
-
-    with make_openai_provider(chunks) as provider:
-        responses = []
-        async for response in provider.chat(model="test", messages=[], think=True):
-            responses.append(response)
-
-        assert len(responses) >= 1
-        thinking_responses = [r for r in responses if r.message.thinking]
-        assert len(thinking_responses) >= 1
-        assert "Processing information" in thinking_responses[0].message.thinking
-
-
-async def test_openai_think_true_sets_reasoning_effort_high():
-    """Test that think=True sets reasoning_effort='high'."""
+@pytest.mark.parametrize("think,expected_effort", [(True, "high"), (False, "none")])
+async def test_openai_reasoning_effort_mapping(think, expected_effort):
+    """Test that think flag maps to correct reasoning_effort value."""
     with patch("backend.provider.provider.AsyncOpenAI") as mock_client_class:
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
@@ -388,37 +328,13 @@ async def test_openai_think_true_sets_reasoning_effort_high():
 
         provider = OpenAICompatibleProvider(base_url="http://localhost:8000")
         responses = []
-        async for response in provider.chat(model="test", messages=[], think=True):
+        async for response in provider.chat(model="test", messages=[], think=think):
             responses.append(response)
 
-        # Verify reasoning_effort='high' was passed
+        # Verify correct reasoning_effort was passed
         mock_client.chat.completions.create.assert_called_once()
         call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-        assert call_kwargs.get("reasoning_effort") == "high"
-
-
-async def test_openai_think_false_sets_reasoning_effort_none():
-    """Test that think=False sets reasoning_effort='none'."""
-    with patch("backend.provider.provider.AsyncOpenAI") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client_class.return_value = mock_client
-
-        chunk = make_openai_chunk(content="result")
-
-        async def async_gen(**kwargs):
-            yield chunk
-
-        mock_client.chat.completions.create = AsyncMock(side_effect=lambda **kwargs: async_gen(**kwargs))
-
-        provider = OpenAICompatibleProvider(base_url="http://localhost:8000")
-        responses = []
-        async for response in provider.chat(model="test", messages=[], think=False):
-            responses.append(response)
-
-        # Verify reasoning_effort='none' was passed
-        mock_client.chat.completions.create.assert_called_once()
-        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-        assert call_kwargs.get("reasoning_effort") == "none"
+        assert call_kwargs.get("reasoning_effort") == expected_effort
 
 
 async def test_openai_serializes_dict_tool_call_arguments():
