@@ -5,10 +5,9 @@ A TUI chat interface that runs small local models as tool-calling agents. Models
 > Most agent harnesses target frontier models (Claude, GPT-4) and require 8b+ parameter models to function reliably. PicoHarness is built for small models — 1b to 4b parameters — so you can run a capable, no-cost AI assistant on consumer hardware. As a high school student, I've found that a model like `qwen3:4b` is better than the free version of ChatGPT, and I've successfully gotten it to help me with my math homework.
 
 ## Requirements
-
-- **Python** ≥ 3.11
+- **Windows?** Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) first
 - **[uv](https://docs.astral.sh/uv/)**
-- **Ollama** or any OpenAI-compatible provider (LM Studio, vLLM, mlx-lm, oMLX, etc.)
+- **[Ollama](https://ollama.com/)** or any OpenAI-compatible provider (LM Studio, vLLM, mlx-lm, oMLX, etc.)
 - For best results, use a modern terminal like iTerm2
 
 ## Quickstart (Ollama)
