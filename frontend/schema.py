@@ -71,7 +71,7 @@ def _set_provider(app: ChatApp, value: str) -> None:
     if value == "ollama":
         provider = OllamaProvider()
     else:
-        provider = OpenAICompatibleProvider(base_url=f"http://{value}/v1", api_key=app.api.api_key or "")
+        provider = OpenAICompatibleProvider(base_url=value.rstrip("/"), api_key=app.api.api_key or "")
     app.api.set_provider(provider)
 
 

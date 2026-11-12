@@ -152,7 +152,7 @@ class OpenAICompatibleProvider(BaseProvider):
                 continue
             # print(delta)
 
-            token_count = chunk.input_tokens or 0
+            token_count = getattr(chunk, "input_tokens", 0) or 0
             thinking = (
                 getattr(delta, "reasoning_content", None)
                 or getattr(delta, "reasoning", None)

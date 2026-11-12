@@ -30,7 +30,7 @@ async def doctor_main(config_path: Path, preset: str | None) -> int:
             _check("Ollama (http://localhost:11434)", await _http_reachable("http://localhost:11434/api/tags"))
         )
     else:
-        results.append(_check(f"Provider ({cfg.provider})", await _http_reachable(f"http://{cfg.provider}/v1/models")))
+        results.append(_check(f"Provider ({cfg.provider})", await _http_reachable(f"{cfg.provider.rstrip('/')}/models")))
 
     if cfg.searxng_url:
         results.append(_check(f"SearXNG ({cfg.searxng_url})", await _http_reachable(cfg.searxng_url)))

@@ -432,7 +432,7 @@ class ChatApp(App):
         """Show text input for custom provider URL."""
         command_panel = self.query_one("#command-panel", CommandPanel)
         await command_panel.show_text_input(
-            current=None, nullable=False, label="Enter provider URL (e.g., http://localhost:8000)"
+            current=None, nullable=False, label="Enter provider base URL (e.g., http://localhost:8000/v1)"
         )
 
     async def _show_name_input(self) -> None:
@@ -743,7 +743,7 @@ def _build_api(cfg, session_manager: SessionManager) -> BackendAPI:
     provider = (
         OllamaProvider()
         if cfg.provider == "ollama"
-        else OpenAICompatibleProvider(base_url=f"http://{cfg.provider}/v1", api_key=cfg.api_key or "")
+        else OpenAICompatibleProvider(base_url=cfg.provider.rstrip("/"), api_key=cfg.api_key or "")
     )
 
     system_prompt = None

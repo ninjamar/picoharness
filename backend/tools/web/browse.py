@@ -79,13 +79,13 @@ class ReadWebPage(BaseTool):
         self.jina_reader_url = jina_reader_url
         self.session = get_or_create_session()
 
-    async def _call(self, url: str, truncate: int = 4000) -> str:
+    async def _call(self, url: str, truncate: int | None = 4000) -> str:
         """
         Read the contents of a fully formed URL as markdown.
 
         Args:
             url: Fully formed url (includes protocol) of the webpage
-            truncate: Maximum characters to return (default 4000). Higher values get more content but use more context.
+            truncate: Maximum characters to return (default 4000). Higher values get more content but use more context. A value of None reads the entire page.
 
         Returns:
             The contents of the webpage, as markdown
